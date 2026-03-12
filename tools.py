@@ -79,6 +79,10 @@ def _clear_slide_content(slide):
         else:
             tf = _safe_text_frame(shape)
             if tf:
+                try:
+                    tf.column_count = 1
+                except Exception:
+                    pass
                 for para in tf.paragraphs:
                     for portion in para.portions:
                         portion.text = ""
@@ -97,6 +101,10 @@ def _normalize_para_format(para, template_para=None):
         pf.depth = 0
         if template_para:
             tpf = template_para.paragraph_format
+            try:
+                pf.alignment = tpf.alignment
+            except Exception:
+                pass
             try:
                 pf.margin_left = tpf.margin_left
             except Exception:
@@ -374,7 +382,20 @@ def fill_placeholder(prs, slide_idx: int, shape_name: str, text: str) -> dict:
     char_limit = estimate_char_limit(shape.width, shape.height, font_size_pt=max_font)
     text = _truncate_to_fit(text, char_limit)
 
-    new_paragraphs = text.split("\n")
+    raw_lines = text.split("\n")
+    new_paragraphs = []
+    header_flags = []  # None=bullet, "H"=plain header, "HB"=bold header
+    for line in raw_lines:
+        if line.startswith("[HB] "):
+            new_paragraphs.append(line[5:])
+            header_flags.append("HB")
+        elif line.startswith("[H] "):
+            new_paragraphs.append(line[4:])
+            header_flags.append("H")
+        else:
+            new_paragraphs.append(line)
+            header_flags.append(None)
+
     existing_count = tf.paragraphs.count
 
     # Find the first bullet paragraph (depth 0, with indent) to use as
@@ -405,8 +426,27 @@ def fill_placeholder(prs, slide_idx: int, shape_name: str, text: str) -> dict:
                     portion = slides.Portion()
                     portion.text = new_paragraphs[p_idx]
                     para.portions.add(portion)
-                # Normalize formatting: all content paragraphs get uniform style
-                if p_idx > 0 and template_para:
+                # Normalize formatting: headers get no bullet; bullets get uniform style
+                hflag = header_flags[p_idx] if p_idx < len(header_flags) else None
+                if hflag:
+                    try:
+                        pf = para.paragraph_format
+                        pf.bullet.type = slides.BulletType.NONE
+                        pf.margin_left = 0
+                        pf.indent = 0
+                        if template_para:
+                            try:
+                                pf.alignment = template_para.paragraph_format.alignment
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    if hflag == "HB" and para.portions.count > 0:
+                        try:
+                            para.portions[0].portion_format.font_bold = slides.NullableBool.TRUE
+                        except Exception:
+                            pass
+                elif p_idx > 0 and template_para:
                     _normalize_para_format(para, template_para)
             else:
                 # Extra donor paragraph — blank it out
@@ -442,7 +482,26 @@ def fill_placeholder(prs, slide_idx: int, shape_name: str, text: str) -> dict:
                     pass
             new_para.portions.add(portion)
             tf.paragraphs.add(new_para)
-            if template_para:
+            hflag = header_flags[p_idx] if p_idx < len(header_flags) else None
+            if hflag:
+                try:
+                    pf = new_para.paragraph_format
+                    pf.bullet.type = slides.BulletType.NONE
+                    pf.margin_left = 0
+                    pf.indent = 0
+                    if template_para:
+                        try:
+                            pf.alignment = template_para.paragraph_format.alignment
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                if hflag == "HB":
+                    try:
+                        portion.portion_format.font_bold = slides.NullableBool.TRUE
+                    except Exception:
+                        pass
+            elif template_para:
                 _normalize_para_format(new_para, template_para)
 
     return {"status": "ok", "slide_idx": slide_idx, "shape": shape_name}

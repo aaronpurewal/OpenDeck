@@ -152,7 +152,11 @@ and look broken. Use bullet-style short phrases, not full sentences. \
 Match the density and style of the existing slides in the document — if \
 existing slides use 3-5 bullet points of 8-12 words each, do the same. \
 For body shapes with large char_limits, aim for 70-85% of char_limit so the \
-slide looks filled. For titles and short labels, be concise. \
+slide looks filled — half-empty body shapes look worse than slightly dense ones. \
+For each fill_placeholder item, check the target shape's char_limit in the \
+DOCUMENT STATE and write to 70-85% of that number. Err toward more content; \
+the system truncates overflow, but sparse slides look bad. \
+For titles and short labels, be concise. \
 Count your characters before finalizing.
 
 YOUR OUTPUT must be a JSON object with a "content_updates" array. Each item \
@@ -230,6 +234,14 @@ RULES:
    but half-empty body shapes also look bad — match the slide's style.
 3. Provide plain text only. Use "\\n" for paragraph breaks within fill_placeholder shapes.
    NEVER include formatting hints, bold markers, or delimiters.
+   For fill_placeholder shapes with multiple sections, prefix section header \
+   lines with "[H] " for plain headers or "[HB] " for bold headers \
+   (e.g., "[HB] Situation Overview\\nBullet point 1\\n[H] Key Risks\\nBullet 2"). \
+   [H] renders the header without a bullet character, inheriting the existing font. \
+   [HB] also removes the bullet and makes the text bold. Choose [HB] when the \
+   header should stand out visually (e.g., major section titles), [H] for lighter \
+   sub-section labels. Only use these for genuine section headers, not for \
+   regular bullet content.
 4. For edit_run and edit_table_run: provide the exact new_text for that \
    specific run. Include the run_match and para_idx from the manifest.
 5. For edit_paragraph and edit_table_cell: provide the full new_text \
