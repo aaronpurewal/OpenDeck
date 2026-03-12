@@ -56,10 +56,11 @@ def _safe_effective_format(portion_format):
     Resolves the full master → layout → slide inheritance chain so we get
     the actual rendered values, not just locally-set overrides.
     Returns None if get_effective() is unavailable or fails.
+    Uses BaseException to catch .NET proxy errors (RuntimeError subclasses).
     """
     try:
         return portion_format.get_effective()
-    except Exception:
+    except BaseException:
         return None
 
 
@@ -69,21 +70,19 @@ def _safe_font_height(portion_format):
     Tries get_effective() first for resolved inherited values,
     falls back to raw portion_format.
     """
-    # Try effective (resolved) value first
     eff = _safe_effective_format(portion_format)
     if eff is not None:
         try:
             fh = eff.font_height
             if fh is not None and not math.isnan(fh):
                 return fh
-        except Exception:
+        except BaseException:
             pass
-    # Fallback to raw value
     try:
         fh = portion_format.font_height
         if fh is not None and not math.isnan(fh):
             return fh
-    except Exception:
+    except BaseException:
         pass
     return 0
 
@@ -99,13 +98,13 @@ def _safe_font_name(portion_format):
             lf = eff.latin_font
             if lf is not None:
                 return str(lf)
-        except Exception:
+        except BaseException:
             pass
     try:
         lf = portion_format.latin_font
         if lf is not None:
             return str(lf)
-    except Exception:
+    except BaseException:
         pass
     return None
 
@@ -120,7 +119,7 @@ def _safe_font_bold(portion_format):
     if eff is not None:
         try:
             return bool(eff.font_bold)
-        except Exception:
+        except BaseException:
             pass
     try:
         val = portion_format.font_bold
@@ -128,7 +127,7 @@ def _safe_font_bold(portion_format):
             return True
         elif val == slides.NullableBool.FALSE:
             return False
-    except Exception:
+    except BaseException:
         pass
     return None
 
@@ -142,7 +141,7 @@ def _safe_font_italic(portion_format):
     if eff is not None:
         try:
             return bool(eff.font_italic)
-        except Exception:
+        except BaseException:
             pass
     try:
         val = portion_format.font_italic
@@ -150,7 +149,7 @@ def _safe_font_italic(portion_format):
             return True
         elif val == slides.NullableBool.FALSE:
             return False
-    except Exception:
+    except BaseException:
         pass
     return None
 

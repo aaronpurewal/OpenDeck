@@ -23,6 +23,65 @@ from validation import check_placeholders, validate_data_integrity, smoke_test
 from config import LLM_PROVIDER, DEFAULT_OUTPUT_DIR, MAX_LLM_RETRIES
 
 
+_ACTION_TO_SHAPE_TYPE = {
+    "fill_placeholder": "text", "edit_run": "text", "edit_paragraph": "text",
+    "fill_table": "table", "edit_table_cell": "table", "edit_table_run": "table",
+    "update_chart": "chart",
+}
+
+
+def _remap_manifest_shapes(plan: dict, post_state: dict, cloned_labels: set):
+    """
+    Fix manifest shape names for cloned slides after donor cloning.
+
+    Layout placeholder names (e.g. "Holder 2") don't match the donor slide's
+    actual shape names (e.g. "object 2"). Remap by matching shape type and
+    position order within the slide.
+    """
+    # Build label → slide data lookup using label_list (executor labels)
+    # label_list[i] maps to slides[i] by position — harvest_deck labels
+    # (slide_0, slide_1) differ from executor labels (new_exec_summary)
+    slide_lookup = {}
+    label_list = post_state.get("label_list", [])
+    slides = post_state.get("slides", [])
+    for i, label in enumerate(label_list):
+        if i < len(slides):
+            slide_lookup[label] = slides[i]
+
+    for entry in plan.get("content_manifest", []):
+        slide_label = entry.get("slide_label", "")
+        if slide_label not in cloned_labels:
+            continue
+        slide_data = slide_lookup.get(slide_label)
+        if not slide_data:
+            continue
+
+        # Check if the manifest shape name actually exists on the slide
+        actual_names = {s["name"] for s in slide_data.get("shapes", [])}
+        if entry.get("shape_name", "") in actual_names:
+            continue  # Name already matches, no remap needed
+
+        # Find shapes of matching type on the actual slide
+        target_type = _ACTION_TO_SHAPE_TYPE.get(entry.get("action", ""))
+        if not target_type:
+            continue
+        matching_shapes = [s["name"] for s in slide_data.get("shapes", [])
+                          if s.get("type") == target_type]
+
+        # Count how many previous manifest entries target the same slide+type
+        # to determine position index
+        idx = 0
+        for prev in plan.get("content_manifest", []):
+            if prev is entry:
+                break
+            if (prev.get("slide_label") == slide_label and
+                    _ACTION_TO_SHAPE_TYPE.get(prev.get("action", "")) == target_type):
+                idx += 1
+
+        if idx < len(matching_shapes):
+            entry["shape_name"] = matching_shapes[idx]
+
+
 def step1_harvest(input_path: str) -> tuple:
     """
     Load the deck and harvest its state.
@@ -96,6 +155,19 @@ def step3_execute(plan: dict, deck_state: dict, prs,
     # Re-harvest so the content LLM sees actual shape names on new slides.
     post_struct_state = harvest_deck(prs)
     post_struct_state["label_list"] = label_list.copy()  # Use executor's label list
+
+    # --- Fix manifest shape names for cloned slides ---
+    # Pass 1 uses layout placeholder names (e.g. "Holder 2") but after
+    # donor cloning, the actual shapes have different names (e.g. "object 2").
+    # Remap by matching shape type and position order.
+    cloned_labels = set()
+    for step in plan.get("structural_changes", []):
+        if step.get("action") == "clone_slide":
+            cloned_labels.add(step.get("label", ""))
+
+    if cloned_labels:
+        _remap_manifest_shapes(plan, post_struct_state, cloned_labels)
+
     deck_state_json = json.dumps(compact_state(post_struct_state), indent=2)
 
     # --- Phase B: Generate content (Pass 2 LLM call, the slow part) ---

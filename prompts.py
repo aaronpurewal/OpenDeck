@@ -136,6 +136,15 @@ You receive a structural plan with a content manifest, and the document's \
 full state as JSON. Your job is to generate the actual text content for \
 every item in the manifest.
 
+CRITICAL -- USE SHAPE NAMES FROM THE DOCUMENT STATE, NOT THE MANIFEST:
+The manifest's shape_name fields are APPROXIMATE — they come from the layout \
+template and may not match the actual shape names on the slide. ALWAYS look \
+up the slide in the DOCUMENT STATE below to find the real shape names. For \
+example, if the manifest says shape_name "Holder 2" but the document state \
+shows slide "new_summary_1" has shapes named "object 2" and "object 3", \
+use "object 2" and "object 3" in your output. Match manifest items to \
+actual shapes by position (first text shape = title, second = body, etc.).
+
 CRITICAL -- TEXT LENGTH CONSTRAINT:
 Every shape has a char_limit. This is a HARD MAXIMUM based on the physical \
 dimensions of the shape. If you exceed it, the text WILL overflow the shape \
