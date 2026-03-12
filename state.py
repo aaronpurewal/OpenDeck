@@ -1,0 +1,488 @@
+"""
+State Layer: Deck harvesting and state utilities.
+
+Responsible for extracting a complete JSON-serializable representation
+of a PowerPoint deck via Aspose.Slides. This state dict is the LLM's
+"working memory" — it never sees the PPTX file directly.
+"""
+
+import math
+import aspose.slides as slides
+import aspose.slides.charts as charts
+from config import CHAR_LIMIT_SAFETY_MARGIN, DEFAULT_FONT_SIZE_PT, DEFAULT_LINE_SPACING
+
+
+def estimate_char_limit(width_emu: int, height_emu: int,
+                        font_size_emu: float = None,
+                        line_spacing: float = DEFAULT_LINE_SPACING) -> int:
+    """
+    Conservative character limit estimate based on shape dimensions.
+
+    EMU = English Metric Units (914400 EMU = 1 inch, 12700 EMU = 1 point).
+    """
+    if font_size_emu and font_size_emu > 0 and not math.isnan(font_size_emu):
+        font_size_pt = font_size_emu / 12700
+    else:
+        font_size_pt = DEFAULT_FONT_SIZE_PT
+
+    width_pt = width_emu / 12700
+    height_pt = height_emu / 12700
+    avg_char_width_pt = font_size_pt * 0.6
+    line_height_pt = font_size_pt * line_spacing
+
+    if avg_char_width_pt <= 0 or line_height_pt <= 0:
+        return 50
+
+    chars_per_line = int(width_pt / avg_char_width_pt)
+    num_lines = int(height_pt / line_height_pt)
+    return int(chars_per_line * num_lines * CHAR_LIMIT_SAFETY_MARGIN)
+
+
+def _safe_text_frame(shape):
+    """Safely get text_frame from a shape. Returns None if not available."""
+    try:
+        tf = shape.text_frame
+        if tf is not None:
+            return tf
+    except Exception:
+        pass
+    return None
+
+
+def _safe_effective_format(portion_format):
+    """
+    Get the effective (resolved) portion format via get_effective().
+
+    Resolves the full master → layout → slide inheritance chain so we get
+    the actual rendered values, not just locally-set overrides.
+    Returns None if get_effective() is unavailable or fails.
+    """
+    try:
+        return portion_format.get_effective()
+    except Exception:
+        return None
+
+
+def _safe_font_height(portion_format):
+    """Get font_height, returning 0 if NaN or unavailable.
+
+    Tries get_effective() first for resolved inherited values,
+    falls back to raw portion_format.
+    """
+    # Try effective (resolved) value first
+    eff = _safe_effective_format(portion_format)
+    if eff is not None:
+        try:
+            fh = eff.font_height
+            if fh is not None and not math.isnan(fh):
+                return fh
+        except Exception:
+            pass
+    # Fallback to raw value
+    try:
+        fh = portion_format.font_height
+        if fh is not None and not math.isnan(fh):
+            return fh
+    except Exception:
+        pass
+    return 0
+
+
+def _safe_font_name(portion_format):
+    """Get latin font name as string, or None.
+
+    Tries get_effective() first for resolved inherited values.
+    """
+    eff = _safe_effective_format(portion_format)
+    if eff is not None:
+        try:
+            lf = eff.latin_font
+            if lf is not None:
+                return str(lf)
+        except Exception:
+            pass
+    try:
+        lf = portion_format.latin_font
+        if lf is not None:
+            return str(lf)
+    except Exception:
+        pass
+    return None
+
+
+def _safe_font_bold(portion_format):
+    """Get bold state. Returns True/False/None.
+
+    Tries get_effective() first — effective format returns a direct
+    boolean rather than NullableBool, giving resolved inherited values.
+    """
+    eff = _safe_effective_format(portion_format)
+    if eff is not None:
+        try:
+            return bool(eff.font_bold)
+        except Exception:
+            pass
+    try:
+        val = portion_format.font_bold
+        if val == slides.NullableBool.TRUE:
+            return True
+        elif val == slides.NullableBool.FALSE:
+            return False
+    except Exception:
+        pass
+    return None
+
+
+def _safe_font_italic(portion_format):
+    """Get italic state. Returns True/False/None.
+
+    Tries get_effective() first for resolved inherited values.
+    """
+    eff = _safe_effective_format(portion_format)
+    if eff is not None:
+        try:
+            return bool(eff.font_italic)
+        except Exception:
+            pass
+    try:
+        val = portion_format.font_italic
+        if val == slides.NullableBool.TRUE:
+            return True
+        elif val == slides.NullableBool.FALSE:
+            return False
+    except Exception:
+        pass
+    return None
+
+
+def extract_shape(shape) -> dict | None:
+    """Extract metadata from a single shape. Returns None for unsupported types."""
+    base = {
+        "name": shape.name,
+        "bounds": {
+            "x": shape.x, "y": shape.y,
+            "w": shape.width, "h": shape.height
+        }
+    }
+
+    # --- Text shapes ---
+    tf = _safe_text_frame(shape)
+    if tf is not None:
+        base["type"] = "text"
+        try:
+            base["text"] = tf.text or ""
+        except Exception:
+            base["text"] = ""
+        base["paragraphs"] = []
+        max_font_size = 0
+
+        for para in tf.paragraphs:
+            para_info = {"runs": []}
+            for portion in para.portions:
+                pf = portion.portion_format
+                fh = _safe_font_height(pf)
+                if fh > max_font_size:
+                    max_font_size = fh
+                run_info = {
+                    "text": portion.text or "",
+                    "bold": _safe_font_bold(pf),
+                    "italic": _safe_font_italic(pf),
+                    "font_size": fh,
+                    "font_name": _safe_font_name(pf),
+                }
+                para_info["runs"].append(run_info)
+            base["paragraphs"].append(para_info)
+
+        base["char_limit"] = estimate_char_limit(
+            shape.width, shape.height, font_size_emu=max_font_size
+        )
+        return base
+
+    # --- Table shapes ---
+    if isinstance(shape, slides.Table):
+        try:
+            table = shape
+            base["type"] = "table"
+            base["row_count"] = len(table.rows)
+            base["col_count"] = len(table.columns)
+            base["rows"] = []
+            for row_idx in range(len(table.rows)):
+                row = table.rows[row_idx]
+                row_data = []
+                for col_idx in range(len(table.columns)):
+                    cell = row[col_idx]
+                    cell_text = ""
+                    is_merged = False
+                    cell_tf = _safe_text_frame(cell)
+                    if cell_tf:
+                        try:
+                            cell_text = cell_tf.text or ""
+                        except Exception:
+                            cell_text = ""
+                    try:
+                        is_merged = cell.is_merged_cell
+                    except Exception:
+                        pass
+                    cell_info = {
+                        "text": cell_text,
+                        "is_merged": is_merged,
+                    }
+                    row_data.append(cell_info)
+                base["rows"].append(row_data)
+
+            if len(table.rows) > 0 and len(table.columns) > 0:
+                base["cell_char_limit"] = estimate_char_limit(
+                    table.columns[0].width, table.rows[0].height
+                )
+            else:
+                base["cell_char_limit"] = 50
+            return base
+        except Exception:
+            base["type"] = "table"
+            base["row_count"] = 0
+            base["col_count"] = 0
+            base["rows"] = []
+            base["cell_char_limit"] = 50
+            return base
+
+    # --- Chart shapes ---
+    if isinstance(shape, charts.Chart):
+        try:
+            chart = shape
+            base["type"] = "chart"
+            base["chart_type"] = str(chart.type) if chart.type else "unknown"
+            base["series"] = []
+            if chart.chart_data and chart.chart_data.series:
+                for series in chart.chart_data.series:
+                    series_info = {
+                        "name": series.name if series.name else "",
+                        "values": []
+                    }
+                    if series.data_points:
+                        for dp in series.data_points:
+                            try:
+                                series_info["values"].append(dp.value)
+                            except Exception:
+                                series_info["values"].append(None)
+                    base["series"].append(series_info)
+            base["categories"] = []
+            if chart.chart_data and chart.chart_data.categories:
+                for cat in chart.chart_data.categories:
+                    try:
+                        base["categories"].append(str(cat.label) if cat.label else "")
+                    except Exception:
+                        base["categories"].append("")
+            return base
+        except Exception:
+            base["type"] = "chart"
+            base["chart_type"] = "unknown"
+            base["series"] = []
+            base["categories"] = []
+            return base
+
+    return None
+
+
+def harvest_deck(prs: slides.Presentation) -> dict:
+    """
+    Extract full state from the presentation.
+
+    Returns a JSON-serializable dict containing:
+    - slide_count: total number of slides
+    - master_layouts: available layouts with placeholder metadata
+    - label_list: ordered list of slide labels (position = Aspose index)
+    - slides: per-slide shape inventory with text, formatting, bounds, char_limits
+    """
+    state = {
+        "slide_count": len(prs.slides),
+        "master_layouts": [],
+        "slides": [],
+        "label_list": []
+    }
+
+    # Walk masters — extract shapes from each layout
+    for master in prs.masters:
+        for layout in master.layout_slides:
+            layout_info = {
+                "name": layout.name,
+                "shapes": []
+            }
+            # Iterate layout shapes and find placeholders
+            for shape in layout.shapes:
+                placeholder = shape.placeholder
+                if placeholder is None:
+                    continue
+                shape_info = {
+                    "name": shape.name,
+                    "type": "placeholder",
+                    "placeholder_idx": placeholder.index,
+                    "bounds": {
+                        "x": shape.x, "y": shape.y,
+                        "w": shape.width, "h": shape.height
+                    },
+                }
+                # Get char_limit using actual font size if available
+                max_font = 0
+                tf = _safe_text_frame(shape)
+                if tf:
+                    for para in tf.paragraphs:
+                        for portion in para.portions:
+                            fh = _safe_font_height(portion.portion_format)
+                            if fh > max_font:
+                                max_font = fh
+                shape_info["char_limit"] = estimate_char_limit(
+                    shape.width, shape.height, font_size_emu=max_font
+                )
+                # Describe the formatting pattern
+                if tf and tf.paragraphs.count > 0:
+                    shape_info["paragraph_count"] = tf.paragraphs.count
+                    try:
+                        shape_info["default_text"] = (tf.text or "")[:100]
+                    except Exception:
+                        shape_info["default_text"] = ""
+                layout_info["shapes"].append(shape_info)
+            state["master_layouts"].append(layout_info)
+
+    # Build layout → slide label mapping, then attach to each layout
+    layout_usage = {}  # layout_name → [slide_labels]
+    for i in range(len(prs.slides)):
+        try:
+            ln = prs.slides[i].layout_slide.name if prs.slides[i].layout_slide else None
+        except Exception:
+            ln = None
+        if ln:
+            layout_usage.setdefault(ln, []).append(f"slide_{i}")
+    for layout_info in state["master_layouts"]:
+        layout_info["used_by"] = layout_usage.get(layout_info["name"], [])
+
+    # Walk slides — each gets a stable label
+    for i in range(len(prs.slides)):
+        slide = prs.slides[i]
+        label = f"slide_{i}"
+        layout_name = "Unknown"
+        try:
+            if slide.layout_slide:
+                layout_name = slide.layout_slide.name
+        except Exception:
+            pass
+        slide_state = {
+            "label": label,
+            "index": i,
+            "layout_name": layout_name,
+            "shapes": []
+        }
+        state["label_list"].append(label)
+        for shape in slide.shapes:
+            shape_state = extract_shape(shape)
+            if shape_state:
+                slide_state["shapes"].append(shape_state)
+        state["slides"].append(slide_state)
+
+    return state
+
+
+def compact_state(state: dict, max_text_chars: int = 500) -> dict:
+    """
+    Produce a compact version of the deck state for LLM context.
+
+    The full state can be 200K+ tokens for large decks. The LLM only needs:
+    - Slide labels, layout names, shape names
+    - Text content (truncated to max_text_chars)
+    - char_limits
+    - Run-level structure for edit_run targeting (text only, no formatting metadata)
+    - Table content (truncated)
+    - Chart series names and values
+
+    Drops: bounding boxes, font metadata, bold/italic/font_name/font_size on runs,
+    paragraph_count, default_text on layouts.
+    """
+    compact = {
+        "slide_count": state["slide_count"],
+        "label_list": state["label_list"],
+        "master_layouts": [],
+        "slides": []
+    }
+
+    # Compact layouts — just name + placeholder names and char_limits
+    for layout in state.get("master_layouts", []):
+        cl = {"name": layout["name"], "shapes": []}
+        for shape in layout.get("shapes", []):
+            cl["shapes"].append({
+                "name": shape["name"],
+                "type": shape.get("type", "placeholder"),
+                "char_limit": shape.get("char_limit", 0),
+            })
+        cl["used_by"] = layout.get("used_by", [])
+        compact["master_layouts"].append(cl)
+
+    # Compact slides
+    for slide in state.get("slides", []):
+        cs = {
+            "label": slide["label"],
+            "index": slide["index"],
+            "layout_name": slide["layout_name"],
+            "shapes": []
+        }
+        for shape in slide.get("shapes", []):
+            s_type = shape.get("type", "")
+
+            if s_type == "text":
+                text = shape.get("text", "")
+                compact_shape = {
+                    "name": shape["name"],
+                    "type": "text",
+                    "char_limit": shape.get("char_limit", 0),
+                    "text": text[:max_text_chars] + ("..." if len(text) > max_text_chars else ""),
+                }
+                # Include run texts for edit_run targeting — just the text, no formatting
+                runs_summary = []
+                for pi, para in enumerate(shape.get("paragraphs", [])):
+                    run_texts = [r["text"] for r in para.get("runs", []) if r.get("text")]
+                    if run_texts:
+                        runs_summary.append({"p": pi, "runs": run_texts})
+                if runs_summary:
+                    compact_shape["paragraphs"] = runs_summary
+                cs["shapes"].append(compact_shape)
+
+            elif s_type == "table":
+                compact_shape = {
+                    "name": shape["name"],
+                    "type": "table",
+                    "row_count": shape.get("row_count", 0),
+                    "col_count": shape.get("col_count", 0),
+                    "cell_char_limit": shape.get("cell_char_limit", 50),
+                }
+                # Include first few rows of data for context
+                rows = shape.get("rows", [])
+                compact_rows = []
+                for row in rows[:8]:  # Cap at 8 rows
+                    compact_row = []
+                    for cell in row:
+                        cell_text = cell.get("text", "") if isinstance(cell, dict) else str(cell)
+                        compact_row.append(cell_text[:60])
+                    compact_rows.append(compact_row)
+                if compact_rows:
+                    compact_shape["rows"] = compact_rows
+                if len(rows) > 8:
+                    compact_shape["total_rows"] = len(rows)
+                cs["shapes"].append(compact_shape)
+
+            elif s_type == "chart":
+                compact_shape = {
+                    "name": shape["name"],
+                    "type": "chart",
+                    "chart_type": shape.get("chart_type", "unknown"),
+                    "series": shape.get("series", []),
+                    "categories": shape.get("categories", []),
+                }
+                cs["shapes"].append(compact_shape)
+
+            else:
+                cs["shapes"].append({
+                    "name": shape["name"],
+                    "type": s_type,
+                })
+
+        compact["slides"].append(cs)
+
+    return compact

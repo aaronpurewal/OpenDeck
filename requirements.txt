@@ -1,0 +1,5 @@
+aspose-slides
+openai
+anthropic
+streamlit
+Pillow

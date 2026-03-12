@@ -1,0 +1,189 @@
+"""
+Pipeline: Two-step orchestration with user checkpoint.
+
+Step 1: Harvest deck state (Aspose, instant)
+Step 2: Generate structural plan (LLM Pass 1, ~3 seconds)
+  -- User reviews and approves --
+Step 3: Execute plan deterministically
+  A: Structural changes (Aspose, instant)
+  B: Generate content (LLM Pass 2, ~8-30 seconds)
+  C: Execute content updates (Aspose, instant)
+  D: Validate (placeholder detection + data integrity)
+  E: Save + smoke test
+"""
+
+import json
+import os
+import aspose.slides as slides
+
+from state import harvest_deck, compact_state
+from llm import generate_structure_plan, generate_content
+from executor import execute_plan
+from validation import check_placeholders, validate_data_integrity, smoke_test
+from config import LLM_PROVIDER, DEFAULT_OUTPUT_DIR, MAX_LLM_RETRIES
+
+
+def step1_harvest(input_path: str) -> tuple:
+    """
+    Load the deck and harvest its state.
+    Returns (Aspose Presentation object, state dict).
+    Called once when the user uploads a file.
+    """
+    prs = slides.Presentation(input_path)
+    deck_state = harvest_deck(prs)
+    return prs, deck_state
+
+
+def step2_plan(deck_state: dict, user_instruction: str,
+               provider: str = None) -> dict | None:
+    """
+    Pass 1: Generate the structural plan + content manifest.
+    Fast (~3 seconds). Returns the plan for user review.
+    Returns None if JSON parsing fails after retries.
+    """
+    if provider is None:
+        provider = LLM_PROVIDER
+    # Use compact state for LLM context to stay within token limits
+    compact = compact_state(deck_state)
+    deck_state_json = json.dumps(compact, indent=2)
+    return _call_with_retry(
+        generate_structure_plan, deck_state_json, user_instruction, provider
+    )
+
+
+def step3_execute(plan: dict, deck_state: dict, prs,
+                  provider: str = None, output_path: str = None) -> dict:
+    """
+    After user approves the plan:
+    1. Execute structural changes (Aspose, instant)
+    2. Pass 2: Generate all content (LLM, ~8-30 seconds)
+    3. Execute content updates (Aspose, instant)
+    4. Validate and save
+
+    Returns execution result with log and warnings.
+    """
+    if provider is None:
+        provider = LLM_PROVIDER
+    if output_path is None:
+        os.makedirs(DEFAULT_OUTPUT_DIR, exist_ok=True)
+        output_path = os.path.join(DEFAULT_OUTPUT_DIR, "output.pptx")
+
+    label_list = deck_state["label_list"].copy()
+    compact = compact_state(deck_state)
+    deck_state_json = json.dumps(compact, indent=2)
+    log = []
+
+    # --- Phase A: Execute structural changes immediately ---
+    structural_plan = {
+        "structural_changes": plan.get("structural_changes", []),
+        "content_updates": []
+    }
+    struct_result = execute_plan(structural_plan, prs, label_list)
+
+    if struct_result["status"] == "structural_failure":
+        failed_at = struct_result.get("failed_at", "unknown")
+        last_error = ""
+        for entry in struct_result["log"]:
+            if entry.get("status") == "error":
+                last_error = entry.get("message", "")
+        return {"status": "error",
+                "message": f"Structural operation failed at '{failed_at}': {last_error}",
+                "log": struct_result["log"]}
+    log.extend(struct_result["log"])
+
+    # --- Re-harvest after structural changes ---
+    # The deck has changed (slides cloned/deleted/reordered).
+    # Re-harvest so the content LLM sees actual shape names on new slides.
+    post_struct_state = harvest_deck(prs)
+    post_struct_state["label_list"] = label_list.copy()  # Use executor's label list
+    deck_state_json = json.dumps(compact_state(post_struct_state), indent=2)
+
+    # --- Phase B: Generate content (Pass 2 LLM call, the slow part) ---
+    plan_json = json.dumps(plan, indent=2)
+    content = _call_with_retry(
+        generate_content, plan_json, deck_state_json, provider
+    )
+
+    if content is None:
+        return {"status": "error",
+                "message": "LLM failed to generate content after retries"}
+
+    # --- Phase C: Execute content updates (Aspose, instant) ---
+    content_plan = {
+        "structural_changes": [],
+        "content_updates": content.get("content_updates", [])
+    }
+    content_result = execute_plan(content_plan, prs, label_list)
+    log.extend(content_result["log"])
+
+    # --- Phase D: Validate ---
+    # Placeholder detection
+    placeholder_result = check_placeholders(prs)
+    if placeholder_result["status"] == "placeholders_found":
+        # Build a targeted fix manifest
+        fix_manifest = []
+        for f in placeholder_result["findings"]:
+            fix_manifest.append({
+                "action": "fill_placeholder",
+                "slide_label": f"slide_{f['slide_idx']}" if "slide_label" not in f else f["slide_label"],
+                "shape_name": f["shape_name"],
+                "instruction": f"Replace placeholder text: {f['text'][:50]}"
+            })
+
+        fix_plan = json.dumps({"content_manifest": fix_manifest}, indent=2)
+        fix_content = _call_with_retry(
+            generate_content, fix_plan, deck_state_json, provider
+        )
+        if fix_content:
+            execute_plan(
+                {"structural_changes": [],
+                 "content_updates": fix_content.get("content_updates", [])},
+                prs, label_list
+            )
+
+    # Data integrity check for financial content
+    financial_updates = [
+        s for s in content.get("content_updates", [])
+        if any(kw in json.dumps(s).lower()
+               for kw in ["revenue", "ebitda", "$", "%", "margin"])
+    ]
+    data_warnings = []
+    if financial_updates:
+        integrity = validate_data_integrity(financial_updates, deck_state, provider)
+        if not integrity.get("accurate", True):
+            data_warnings = integrity.get("discrepancies", [])
+
+    # --- Phase E: Save and smoke test ---
+    prs.save(output_path, slides.export.SaveFormat.PPTX)
+    smoke = smoke_test(output_path)
+    if smoke["status"] != "ok":
+        return {"status": "error", "message": "Smoke test failed",
+                "detail": smoke.get("message", "")}
+
+    return {
+        "status": "complete",
+        "output_path": output_path,
+        "log": log,
+        "data_warnings": data_warnings,
+        "placeholder_check": placeholder_result["status"]
+    }
+
+
+def _call_with_retry(fn, *args, max_retries: int = None):
+    """
+    Call an LLM function and retry on JSON parse failure.
+    Works with any function that returns a dict.
+    """
+    if max_retries is None:
+        max_retries = MAX_LLM_RETRIES
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            result = fn(*args)
+            if isinstance(result, dict):
+                return result
+            return json.loads(result)
+        except (json.JSONDecodeError, TypeError, KeyError) as e:
+            last_error = str(e)
+            continue
+    return None

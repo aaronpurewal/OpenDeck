@@ -1,0 +1,7 @@
+.env
+*.lic
+output/
+temp/
+__pycache__/
+*.pyc
+.pytest_cache/
