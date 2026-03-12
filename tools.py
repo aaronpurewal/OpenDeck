@@ -60,10 +60,9 @@ def _clear_slide_content(slide):
     """
     Clear all text content on a slide while preserving formatting.
 
-    - Text shapes: sets each portion's text to "" (preserves paragraph/portion
-      structure, font formatting, and shape geometry)
-    - Table cells: same treatment per cell
-    - Charts: left as-is (chart data clearing is complex and rarely needed)
+    Clears portion text to "" but preserves paragraph/portion structure,
+    font formatting, and shape geometry. fill_placeholder will reuse
+    existing paragraphs to avoid ghost empty lines.
     """
     for shape in slide.shapes:
         if isinstance(shape, slides.Table):
@@ -83,6 +82,44 @@ def _clear_slide_content(slide):
                 for para in tf.paragraphs:
                     for portion in para.portions:
                         portion.text = ""
+
+
+def _normalize_para_format(para, template_para=None):
+    """
+    Normalize a paragraph's bullet/indent formatting.
+
+    Resets depth to 0 and copies indent/margin from the template paragraph
+    (typically the first bullet paragraph from the donor). This prevents
+    donor sub-bullet formatting from leaking into fill_placeholder content.
+    """
+    try:
+        pf = para.paragraph_format
+        pf.depth = 0
+        if template_para:
+            tpf = template_para.paragraph_format
+            try:
+                pf.margin_left = tpf.margin_left
+            except Exception:
+                pass
+            try:
+                pf.indent = tpf.indent
+            except Exception:
+                pass
+            # Copy bullet format from template
+            try:
+                pf.bullet.type = tpf.bullet.type
+            except Exception:
+                pass
+            try:
+                pf.bullet.char = tpf.bullet.char
+            except Exception:
+                pass
+            try:
+                pf.bullet.height = tpf.bullet.height
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 def _clear_portion_junk(portion):
@@ -207,7 +244,7 @@ def get_bounds(prs, slide_idx: int, shape_name: str) -> dict:
                 fh = _safe_font_height(portion.portion_format)
                 if fh > max_font:
                     max_font = fh
-    char_limit = estimate_char_limit(shape.width, shape.height, font_size_emu=max_font)
+    char_limit = estimate_char_limit(shape.width, shape.height, font_size_pt=max_font)
     return {"status": "ok", "bounds": bounds, "char_limit": char_limit}
 
 
@@ -327,32 +364,54 @@ def fill_placeholder(prs, slide_idx: int, shape_name: str, text: str) -> dict:
             fh = _safe_font_height(portion.portion_format)
             if fh > max_font:
                 max_font = fh
-    char_limit = estimate_char_limit(shape.width, shape.height, font_size_emu=max_font)
+    char_limit = estimate_char_limit(shape.width, shape.height, font_size_pt=max_font)
     text = _truncate_to_fit(text, char_limit)
 
     new_paragraphs = text.split("\n")
+    existing_count = tf.paragraphs.count
 
-    # Write first paragraph into the existing first paragraph
-    if tf.paragraphs.count > 0:
-        first_para = tf.paragraphs[0]
-        if first_para.portions.count > 0:
-            first_para.portions[0].text = new_paragraphs[0]
-            _clear_portion_junk(first_para.portions[0])
-            # Clear any extra default portions (placeholder boilerplate)
-            for i in range(1, first_para.portions.count):
-                first_para.portions[i].text = ""
+    # Find the first bullet paragraph (depth 0, with indent) to use as
+    # formatting template — ensures all content paragraphs look uniform.
+    template_para = None
+    for pi in range(min(existing_count, 5)):
+        try:
+            pf = tf.paragraphs[pi].paragraph_format
+            if pf.indent and not math.isnan(pf.indent) and pf.indent != 0:
+                template_para = tf.paragraphs[pi]
+                break
+        except Exception:
+            continue
+
+    # Reuse existing paragraphs from the donor slide (preserves font formatting).
+    # Normalize bullet/indent so all content paragraphs look uniform.
+    for p_idx in range(max(len(new_paragraphs), existing_count)):
+        if p_idx < existing_count:
+            para = tf.paragraphs[p_idx]
+            if p_idx < len(new_paragraphs):
+                # Write into existing paragraph
+                if para.portions.count > 0:
+                    para.portions[0].text = new_paragraphs[p_idx]
+                    _clear_portion_junk(para.portions[0])
+                    for i in range(1, para.portions.count):
+                        para.portions[i].text = ""
+                else:
+                    portion = slides.Portion()
+                    portion.text = new_paragraphs[p_idx]
+                    para.portions.add(portion)
+                # Normalize formatting: all content paragraphs get uniform style
+                if p_idx > 0 and template_para:
+                    _normalize_para_format(para, template_para)
+            else:
+                # Extra donor paragraph — blank it out
+                for portion in para.portions:
+                    portion.text = ""
         else:
+            # More new paragraphs than donor had — add fresh ones
+            new_para = slides.Paragraph()
             portion = slides.Portion()
-            portion.text = new_paragraphs[0]
-            first_para.portions.add(portion)
-
-    # Add remaining paragraphs
-    for p_idx in range(1, len(new_paragraphs)):
-        new_para = slides.Paragraph()
-        portion = slides.Portion()
-        portion.text = new_paragraphs[p_idx]
-        new_para.portions.add(portion)
-        tf.paragraphs.add(new_para)
+            portion.text = new_paragraphs[p_idx]
+            new_para.portions.add(portion)
+            tf.paragraphs.add(new_para)
 
     return {"status": "ok", "slide_idx": slide_idx, "shape": shape_name}
 

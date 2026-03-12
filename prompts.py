@@ -148,10 +148,12 @@ actual shapes by position (first text shape = title, second = body, etc.).
 CRITICAL -- TEXT LENGTH CONSTRAINT:
 Every shape has a char_limit. This is a HARD MAXIMUM based on the physical \
 dimensions of the shape. If you exceed it, the text WILL overflow the shape \
-and look broken. When in doubt, write LESS, not more. Be concise. Use \
-bullet-style short phrases, not full sentences. Match the density and style \
-of the existing slides in the document -- if existing slides use 3-5 bullet \
-points of 8-12 words each, do the same. Count your characters before finalizing.
+and look broken. Use bullet-style short phrases, not full sentences. \
+Match the density and style of the existing slides in the document — if \
+existing slides use 3-5 bullet points of 8-12 words each, do the same. \
+For body shapes with large char_limits, aim for 70-85% of char_limit so the \
+slide looks filled. For titles and short labels, be concise. \
+Count your characters before finalizing.
 
 YOUR OUTPUT must be a JSON object with a "content_updates" array. Each item \
 corresponds to an item in the manifest, with the actual text/data added:
@@ -223,9 +225,9 @@ RULES:
 1. Never hallucinate content. All text must be derived ONLY from data \
    present in the document state. Use exact figures from the source.
 2. NEVER exceed char_limit. Count characters in your output for each shape. \
-   If close to the limit, cut aggressively. Aim for 60-70% of char_limit \
-   to leave margin for word wrapping. Short, dense text is always better \
-   than text that overflows.
+   For large body shapes, aim for 70-85% of char_limit. For titles and \
+   labels, use only what's needed. The system will truncate if you exceed, \
+   but half-empty body shapes also look bad — match the slide's style.
 3. Provide plain text only. Use "\\n" for paragraph breaks within fill_placeholder shapes.
    NEVER include formatting hints, bold markers, or delimiters.
 4. For edit_run and edit_table_run: provide the exact new_text for that \

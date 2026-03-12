@@ -26,24 +26,24 @@ if _lic_path.exists():
 
 # --- LLM Provider ---
 # "openai" or "anthropic"
-LLM_PROVIDER = os.getenv("SSE_LLM_PROVIDER", "openai")
+LLM_PROVIDER = os.getenv("SSE_LLM_PROVIDER", "anthropic")
 
 # --- Model Names ---
 OPENAI_MODEL = os.getenv("SSE_OPENAI_MODEL", "gpt-4o-mini")
-ANTHROPIC_MODEL = os.getenv("SSE_ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+ANTHROPIC_MODEL = os.getenv("SSE_ANTHROPIC_MODEL", "claude-opus-4-6")
 
 # --- API Keys (read from environment) ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 # --- Pipeline Defaults ---
-MAX_LLM_RETRIES = 2
+MAX_LLM_RETRIES = 3
 PLAN_MAX_TOKENS = 4000
 CONTENT_MAX_TOKENS = 16000
 VALIDATION_MAX_TOKENS = 2000
 
 # --- Char Limit ---
-CHAR_LIMIT_SAFETY_MARGIN = 0.65
+CHAR_LIMIT_SAFETY_MARGIN = 0.85
 DEFAULT_FONT_SIZE_PT = 12
 DEFAULT_LINE_SPACING = 1.2
 
