@@ -118,6 +118,13 @@ def _normalize_para_format(para, template_para=None):
                 pf.bullet.height = tpf.bullet.height
             except Exception:
                 pass
+            # Copy bullet font so the glyph renders in the correct typeface
+            try:
+                if tpf.bullet.is_bullet_hard_font:
+                    pf.bullet.is_bullet_hard_font = True
+                    pf.bullet.font.name_ascii = tpf.bullet.font.name_ascii
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -407,11 +414,36 @@ def fill_placeholder(prs, slide_idx: int, shape_name: str, text: str) -> dict:
                     portion.text = ""
         else:
             # More new paragraphs than donor had — add fresh ones
+            # Copy paragraph + font formatting from template so they don't
+            # render in the shape's large default font.
             new_para = slides.Paragraph()
             portion = slides.Portion()
             portion.text = new_paragraphs[p_idx]
+            if template_para and template_para.portions.count > 0:
+                tportion = template_para.portions[0]
+                try:
+                    portion.portion_format.font_height = tportion.portion_format.font_height
+                except Exception:
+                    pass
+                try:
+                    portion.portion_format.font_bold = tportion.portion_format.font_bold
+                except Exception:
+                    pass
+                try:
+                    portion.portion_format.latin_font = tportion.portion_format.latin_font
+                except Exception:
+                    pass
+                try:
+                    portion.portion_format.fill_format.fill_type = tportion.portion_format.fill_format.fill_type
+                    if tportion.portion_format.fill_format.fill_type == slides.FillType.SOLID:
+                        portion.portion_format.fill_format.solid_fill_color.color = (
+                            tportion.portion_format.fill_format.solid_fill_color.color)
+                except Exception:
+                    pass
             new_para.portions.add(portion)
             tf.paragraphs.add(new_para)
+            if template_para:
+                _normalize_para_format(new_para, template_para)
 
     return {"status": "ok", "slide_idx": slide_idx, "shape": shape_name}
 
