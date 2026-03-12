@@ -126,6 +126,43 @@ def _safe_font_height(pf):
     return 0
 
 
+def _truncate_to_fit(text: str, char_limit: int) -> str:
+    """
+    Truncate text to fit within char_limit.
+
+    Strategy: slide content is typically \\n-separated bullets.
+    Drop trailing bullets that don't fit. If a single block of text,
+    truncate at the last word boundary and append "...".
+    """
+    if len(text) <= char_limit:
+        return text
+
+    parts = text.split("\n")
+    if len(parts) > 1:
+        # Multi-bullet: accumulate until we'd exceed the limit
+        kept = []
+        running = 0
+        for part in parts:
+            # +1 for the \n separator (except first)
+            added = len(part) + (1 if kept else 0)
+            if running + added > char_limit:
+                break
+            kept.append(part)
+            running += added
+        if kept:
+            return "\n".join(kept)
+
+    # Single block or no bullets fit: word-boundary truncation
+    cutoff = char_limit - 3  # room for "..."
+    if cutoff <= 0:
+        return text[:char_limit]
+    truncated = text[:cutoff]
+    last_space = truncated.rfind(" ")
+    if last_space > cutoff * 0.5:
+        truncated = truncated[:last_space]
+    return truncated + "..."
+
+
 # ---------------------------------------------------------------------------
 # Read Operations
 # ---------------------------------------------------------------------------
@@ -282,6 +319,16 @@ def fill_placeholder(prs, slide_idx: int, shape_name: str, text: str) -> dict:
     if not tf:
         return {"status": "error",
                 "message": f"Shape '{shape_name}' not found or has no text frame on slide {slide_idx}"}
+
+    # Enforce char_limit — LLMs routinely overshoot
+    max_font = 0
+    for para in tf.paragraphs:
+        for portion in para.portions:
+            fh = _safe_font_height(portion.portion_format)
+            if fh > max_font:
+                max_font = fh
+    char_limit = estimate_char_limit(shape.width, shape.height, font_size_emu=max_font)
+    text = _truncate_to_fit(text, char_limit)
 
     new_paragraphs = text.split("\n")
 
