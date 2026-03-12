@@ -121,8 +121,8 @@ def _normalize_para_format(para, template_para=None):
             # Copy bullet font so the glyph renders in the correct typeface
             try:
                 if tpf.bullet.is_bullet_hard_font:
-                    pf.bullet.is_bullet_hard_font = True
-                    pf.bullet.font.name_ascii = tpf.bullet.font.name_ascii
+                    pf.bullet.is_bullet_hard_font = slides.NullableBool.TRUE
+                    pf.bullet.font = slides.FontData(tpf.bullet.font.font_name)
             except Exception:
                 pass
     except Exception:
