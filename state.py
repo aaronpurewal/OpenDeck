@@ -12,21 +12,18 @@ import aspose.slides.charts as charts
 from config import CHAR_LIMIT_SAFETY_MARGIN, DEFAULT_FONT_SIZE_PT, DEFAULT_LINE_SPACING
 
 
-def estimate_char_limit(width_emu: int, height_emu: int,
-                        font_size_emu: float = None,
+def estimate_char_limit(width_pt: float, height_pt: float,
+                        font_size_pt: float = None,
                         line_spacing: float = DEFAULT_LINE_SPACING) -> int:
     """
     Conservative character limit estimate based on shape dimensions.
 
-    EMU = English Metric Units (914400 EMU = 1 inch, 12700 EMU = 1 point).
+    Aspose.Slides for Python returns dimensions in points (1 pt = 1/72 inch).
+    Font sizes from portion_format.font_height are also in points.
     """
-    if font_size_emu and font_size_emu > 0 and not math.isnan(font_size_emu):
-        font_size_pt = font_size_emu / 12700
-    else:
+    if not font_size_pt or font_size_pt <= 0 or math.isnan(font_size_pt):
         font_size_pt = DEFAULT_FONT_SIZE_PT
 
-    width_pt = width_emu / 12700
-    height_pt = height_emu / 12700
     avg_char_width_pt = font_size_pt * 0.6
     line_height_pt = font_size_pt * line_spacing
 
@@ -35,7 +32,7 @@ def estimate_char_limit(width_emu: int, height_emu: int,
 
     chars_per_line = int(width_pt / avg_char_width_pt)
     num_lines = int(height_pt / line_height_pt)
-    return int(chars_per_line * num_lines * CHAR_LIMIT_SAFETY_MARGIN)
+    return max(int(chars_per_line * num_lines * CHAR_LIMIT_SAFETY_MARGIN), 1)
 
 
 def _safe_text_frame(shape):
@@ -193,7 +190,7 @@ def extract_shape(shape) -> dict | None:
             base["paragraphs"].append(para_info)
 
         base["char_limit"] = estimate_char_limit(
-            shape.width, shape.height, font_size_emu=max_font_size
+            shape.width, shape.height, font_size_pt=max_font_size
         )
         return base
 
@@ -330,7 +327,7 @@ def harvest_deck(prs: slides.Presentation) -> dict:
                             if fh > max_font:
                                 max_font = fh
                 shape_info["char_limit"] = estimate_char_limit(
-                    shape.width, shape.height, font_size_emu=max_font
+                    shape.width, shape.height, font_size_pt=max_font
                 )
                 # Describe the formatting pattern
                 if tf and tf.paragraphs.count > 0:

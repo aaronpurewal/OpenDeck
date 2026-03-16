@@ -21,13 +21,21 @@ Every slide has a "label" field (e.g., "slide_0", "slide_5"). Use labels \
 to reference slides, NOT numeric indices. Assign labels to new slides \
 (e.g., "new_summary_1").
 
-CRITICAL DISTINCTION -- FILL vs EDIT:
+CRITICAL DISTINCTION -- FILL vs EDIT vs CREATE:
 - NEW slides (from clone_slide): will use "fill_placeholder" / "fill_table"
 - EXISTING slides: will use "edit_run" (targeted single-run replacement) / \
   "edit_paragraph" (full paragraph rewrite) / "edit_table_cell" (full cell \
   rewrite) / "edit_table_run" (targeted run within a cell)
+- CREATE FROM SCRATCH: use "create_chart" or "create_table" when a slide \
+  needs a new chart or table that doesn't exist yet. These create new shapes.
 - Use "edit_run" / "edit_table_run" when only a specific value changes (70% of cases)
 - Use "edit_paragraph" / "edit_table_cell" when entire content is being rewritten
+
+CHART AND TABLE CREATION:
+- "create_chart": creates a new chart. Allowed chart_type values: \
+  "clustered_bar", "stacked_bar", "line", "pie", "doughnut", "clustered_column". \
+  Allowed position values: "center", "left_half", "right_half", "bottom_half".
+- "create_table": creates a new table. Same position values as charts.
 
 CHOOSING THE RIGHT LAYOUT:
 Each layout in "master_layouts" includes a "used_by" field listing which \
@@ -114,6 +122,19 @@ YOUR OUTPUT must be a single JSON object:
       "slide_label": "slide_7",
       "shape_name": "Chart 1",
       "instruction": "Add Q3 data point to revenue chart"
+    }},
+    {{
+      "action": "create_chart",
+      "slide_label": "new_summary_1",
+      "chart_type": "clustered_bar",
+      "position": "center",
+      "instruction": "Revenue by quarter bar chart from slide_3 data"
+    }},
+    {{
+      "action": "create_table",
+      "slide_label": "new_summary_1",
+      "position": "bottom_half",
+      "instruction": "Summary KPI table with Revenue, EBITDA, Margin"
     }}
   ]
 }}
@@ -221,6 +242,22 @@ corresponds to an item in the manifest, with the actual text/data added:
       "slide_label": "slide_7",
       "shape_name": "Chart 1",
       "series": {{"Revenue": [12.4, 13.1, 14.8, 15.2]}}
+    }},
+    {{
+      "action": "create_chart",
+      "slide_label": "new_summary_1",
+      "chart_type": "clustered_bar",
+      "title": "Revenue by Quarter",
+      "categories": ["Q1", "Q2", "Q3", "Q4"],
+      "series": [{{"name": "2024", "values": [100, 150, 180, 200]}}],
+      "position": "center"
+    }},
+    {{
+      "action": "create_table",
+      "slide_label": "new_summary_1",
+      "headers": ["Metric", "Q2", "Q3", "Delta"],
+      "rows": [["Revenue", "13.1", "14.8", "+13%"], ["EBITDA", "3.4", "4.0", "+18%"]],
+      "position": "bottom_half"
     }}
   ]
 }}
@@ -247,7 +284,13 @@ RULES:
 5. For edit_paragraph and edit_table_cell: provide the full new_text \
    for the paragraph or cell.
 6. For fill_table: use null for cells that should keep their original content.
-7. Generate content for EVERY item in the manifest. Do not skip any.
+7. For create_chart: provide chart_type, title, categories, series, and position. \
+   chart_type must be one of: clustered_bar, stacked_bar, line, pie, doughnut, \
+   clustered_column. position must be one of: center, left_half, right_half, bottom_half. \
+   series is a list of {{"name": "...", "values": [...]}} objects.
+8. For create_table: provide headers (list of strings) and rows (list of lists). \
+   position must be one of: center, left_half, right_half, bottom_half.
+9. Generate content for EVERY item in the manifest. Do not skip any.
 
 STRUCTURAL PLAN:
 {plan}

@@ -27,6 +27,7 @@ _ACTION_TO_SHAPE_TYPE = {
     "fill_placeholder": "text", "edit_run": "text", "edit_paragraph": "text",
     "fill_table": "table", "edit_table_cell": "table", "edit_table_run": "table",
     "update_chart": "chart",
+    "create_chart": "chart", "create_table": "table",
 }
 
 
@@ -131,6 +132,17 @@ def step3_execute(plan: dict, deck_state: dict, prs,
     compact = compact_state(deck_state)
     deck_state_json = json.dumps(compact, indent=2)
     log = []
+
+    # --- Fix misplaced actions: LLM sometimes puts structural ops in manifest ---
+    _STRUCTURAL_ACTIONS = {"clone_slide", "delete_slides", "reorder_slides", "duplicate_slide"}
+    structural_changes = list(plan.get("structural_changes", []))
+    content_manifest = []
+    for item in plan.get("content_manifest", []):
+        if item.get("action") in _STRUCTURAL_ACTIONS:
+            structural_changes.append(item)
+        else:
+            content_manifest.append(item)
+    plan = {**plan, "structural_changes": structural_changes, "content_manifest": content_manifest}
 
     # --- Phase A: Execute structural changes immediately ---
     structural_plan = {
@@ -256,6 +268,12 @@ def _call_with_retry(fn, *args, max_retries: int = None):
                 return result
             return json.loads(result)
         except (json.JSONDecodeError, TypeError, KeyError) as e:
-            last_error = str(e)
+            last_error = f"Attempt {attempt + 1}: {type(e).__name__}: {e}"
+            print(f"[RETRY] {last_error}")
             continue
+        except Exception as e:
+            last_error = f"Attempt {attempt + 1}: {type(e).__name__}: {e}"
+            print(f"[RETRY] {last_error}")
+            continue
+    print(f"[FAILED] All {max_retries} attempts failed. Last error: {last_error}")
     return None

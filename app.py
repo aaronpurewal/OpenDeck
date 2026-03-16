@@ -7,13 +7,15 @@ Two-column layout:
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import json
 import os
+import base64
 import tempfile
 from io import BytesIO
 
 from pipeline import step1_harvest, step2_plan, step3_execute
-from config import LLM_PROVIDER, DEFAULT_OUTPUT_DIR
+from config import LLM_PROVIDER, DEFAULT_OUTPUT_DIR, LOCAL_API_BASE
 
 # --- Page Config ---
 st.set_page_config(
@@ -41,6 +43,8 @@ if "input_path" not in st.session_state:
     st.session_state.input_path = None
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "auto_approve" not in st.session_state:
+    st.session_state.auto_approve = False
 
 
 def render_slide_thumbnails(prs):
@@ -61,19 +65,51 @@ def render_slide_thumbnails(prs):
     return thumbnails
 
 
+def _auto_download(file_path: str, file_name: str):
+    """Trigger an automatic browser download via injected JS."""
+    with open(file_path, "rb") as f:
+        data = base64.b64encode(f.read()).decode()
+    mime = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    html = (
+        f'<a id="auto-dl" href="data:{mime};base64,{data}" '
+        f'download="{file_name}" style="display:none"></a>'
+        f'<script>document.getElementById("auto-dl").click();</script>'
+    )
+    components.html(html, height=0)
+
+
 # --- Header ---
 st.title("Surgical Slide Engine")
 st.caption("Upload a branded deck. Give an instruction. Get a clean result.")
 
 # --- Sidebar: Provider Selection ---
+_PROVIDER_OPTIONS = ["openai", "anthropic", "local"]
+_PROVIDER_LABELS = {
+    "openai": "OpenAI (GPT)",
+    "anthropic": "Anthropic (Claude)",
+    "local": "Local (Qwen 3.5 35B)",
+}
+
 with st.sidebar:
     st.header("Settings")
     provider = st.selectbox(
         "LLM Provider",
-        ["openai", "anthropic"],
-        index=0 if st.session_state.provider == "openai" else 1
+        _PROVIDER_OPTIONS,
+        index=_PROVIDER_OPTIONS.index(st.session_state.provider)
+              if st.session_state.provider in _PROVIDER_OPTIONS else 1,
+        format_func=lambda x: _PROVIDER_LABELS.get(x, x)
     )
     st.session_state.provider = provider
+
+    if provider == "local":
+        st.caption(f"Server: {LOCAL_API_BASE}")
+        # Quick connectivity check
+        try:
+            import urllib.request
+            urllib.request.urlopen(LOCAL_API_BASE.replace("/v1", ""), timeout=1)
+            st.success("Connected", icon="✅")
+        except Exception:
+            st.warning("Server not reachable. Start LM Studio and enable the local server.", icon="⚠️")
 
     if st.session_state.deck_state:
         st.divider()
@@ -158,6 +194,11 @@ with right_col:
 
     # --- PLANNING PHASE ---
     if st.session_state.phase == "planning":
+        st.session_state.auto_approve = st.checkbox(
+            "Auto-approve plan (skip review step)",
+            value=st.session_state.auto_approve,
+            help="When checked, the plan will be executed immediately without review."
+        )
         user_input = st.chat_input("What should I do with this deck?")
         if user_input:
             st.session_state.messages.append({"role": "user", "content": user_input})
@@ -176,7 +217,10 @@ with right_col:
                     st.error("Failed to generate plan. Please try again.")
                 else:
                     st.session_state.plan = plan
-                    st.session_state.phase = "review"
+                    if st.session_state.auto_approve:
+                        st.session_state.phase = "executing"
+                    else:
+                        st.session_state.phase = "review"
 
                     # Show reasoning
                     if "reasoning" in plan:
@@ -338,6 +382,10 @@ with right_col:
     if st.session_state.phase == "done":
         st.divider()
         st.success("Deck transformation complete!")
+
+        # Auto-download the result file
+        if st.session_state.output_path and os.path.exists(st.session_state.output_path):
+            _auto_download(st.session_state.output_path, "result.pptx")
 
         if st.session_state.execution_log:
             log = st.session_state.execution_log.get("log", [])

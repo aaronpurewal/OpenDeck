@@ -1,8 +1,11 @@
 """
-LLM Interface: Model-agnostic wrapper for OpenAI and Anthropic.
+LLM Interface: Model-agnostic wrapper for OpenAI, Anthropic, and local models.
 
 This is the ONLY file that imports an LLM SDK. Swapping models means
 editing this file and config.py — nothing else changes.
+
+Local models (e.g., Qwen 3.5 35B via LM Studio) use the OpenAI SDK
+with a custom base_url pointing at the local server.
 
 Exposes two functions matching the two passes:
   - generate_structure_plan (Pass 1, fast, small output)
@@ -11,17 +14,58 @@ Exposes two functions matching the two passes:
 
 import json
 from config import (
-    LLM_PROVIDER, OPENAI_MODEL, ANTHROPIC_MODEL,
-    OPENAI_API_KEY, ANTHROPIC_API_KEY,
+    LLM_PROVIDER, OPENAI_MODEL, ANTHROPIC_MODEL, LOCAL_MODEL,
+    OPENAI_API_KEY, ANTHROPIC_API_KEY, LOCAL_API_BASE,
     PLAN_MAX_TOKENS, CONTENT_MAX_TOKENS, VALIDATION_MAX_TOKENS
 )
+
+
+def _extract_json(text: str) -> dict:
+    """
+    Extract the first complete JSON object from text.
+
+    Handles cases where the model appends explanation after the JSON,
+    which causes json.loads to fail with 'Extra data'.
+    """
+    # Try direct parse first (fastest path)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # Find the first '{' and match its closing '}'
+    start = text.find("{")
+    if start == -1:
+        raise json.JSONDecodeError("No JSON object found", text, 0)
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if escape:
+            escape = False
+            continue
+        if c == "\\":
+            escape = True
+            continue
+        if c == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start:i + 1])
+    raise json.JSONDecodeError("Unterminated JSON object", text, start)
 
 
 def _call_llm(system_prompt: str, user_message: str, provider: str,
               max_tokens: int = 16000) -> dict:
     """
     Internal: call the LLM and return parsed JSON.
-    Single function handles both providers.
+    Single function handles all three providers.
     """
     if provider == "openai":
         from openai import OpenAI
@@ -49,7 +93,25 @@ def _call_llm(system_prompt: str, user_message: str, provider: str,
         text = response.content[0].text
         # Strip markdown code fences if present
         text = text.replace("```json", "").replace("```", "").strip()
-        return json.loads(text)
+        # Anthropic models often append explanation after the JSON.
+        # Extract just the JSON object by finding the matching closing brace.
+        return _extract_json(text)
+
+    elif provider == "local":
+        from openai import OpenAI
+        client = OpenAI(base_url=LOCAL_API_BASE, api_key="lm-studio")
+        response = client.chat.completions.create(
+            model=LOCAL_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ],
+            max_tokens=max_tokens,
+            temperature=0.3
+        )
+        text = response.choices[0].message.content
+        text = text.replace("```json", "").replace("```", "").strip()
+        return _extract_json(text)
 
     else:
         raise ValueError(f"Unknown provider: {provider}")

@@ -11,7 +11,8 @@ import traceback
 from tools import (
     clone_slide, delete_slides, reorder_slides, duplicate_slide,
     fill_placeholder, fill_table, edit_run, edit_paragraph,
-    edit_table_cell, edit_table_run, update_chart
+    edit_table_cell, edit_table_run, update_chart,
+    create_chart, create_table
 )
 
 STRUCTURAL_DISPATCH = {
@@ -25,6 +26,9 @@ CONTENT_DISPATCH = {
     # CREATE: fill new/empty slides from cloned layouts
     "fill_placeholder": fill_placeholder,
     "fill_table": fill_table,
+    # CREATE: new charts and tables from scratch
+    "create_chart": create_chart,
+    "create_table": create_table,
     # EDIT: surgically modify existing slides (per-run targeting)
     "edit_run": edit_run,
     "edit_paragraph": edit_paragraph,
@@ -56,8 +60,16 @@ def execute_plan(plan: dict, prs, label_list: list) -> dict:
         except ValueError:
             return None
 
-    # Phase 1: Structural changes (order matters)
-    for step in plan.get("structural_changes", []):
+    # Phase 1: Structural changes
+    # Sort: clones/duplicates first, then deletes, then reorders.
+    # Ensures donor slides exist when cloning, regardless of LLM plan order.
+    _ACTION_PRIORITY = {"clone_slide": 0, "duplicate_slide": 0,
+                        "delete_slides": 1, "reorder_slides": 2}
+    sorted_structural = sorted(
+        plan.get("structural_changes", []),
+        key=lambda s: _ACTION_PRIORITY.get(s.get("action", ""), 1)
+    )
+    for step in sorted_structural:
         action = step["action"]
         args = step.get("args", {})
         try:

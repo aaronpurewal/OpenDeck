@@ -13,7 +13,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import aspose.slides as slides
-from validation import check_placeholders
+from validation import (
+    check_placeholders, _extract_numbers, _collect_source_numbers,
+    _check_edit_deterministic
+)
 
 # Detect evaluation mode
 _EVAL_MODE = False
@@ -99,3 +102,100 @@ class TestCheckPlaceholders:
         result = check_placeholders(prs)
         assert result["status"] == "placeholders_found"
         assert len(result["findings"]) >= 2
+
+
+class TestExtractNumbers:
+    def test_simple_integers(self):
+        assert _extract_numbers("Revenue is 14") == {"14"}
+
+    def test_decimals(self):
+        nums = _extract_numbers("$14.8M and 27.3%")
+        assert "14.8" in nums
+        assert "27.3" in nums
+
+    def test_no_numbers(self):
+        assert _extract_numbers("no numbers here") == set()
+
+    def test_mixed_content(self):
+        nums = _extract_numbers("Q3 revenue grew 18% to $14.8M from $12.5M")
+        assert "18" in nums
+        assert "14.8" in nums
+        assert "12.5" in nums
+
+
+class TestCollectSourceNumbers:
+    def test_gathers_from_text_shapes(self):
+        deck_state = {
+            "slides": [
+                {"shapes": [{"text": "Revenue: $14.8M"}, {"text": "Margin: 27.3%"}]},
+                {"shapes": [{"text": "EBITDA: $4.0M"}]},
+            ]
+        }
+        nums = _collect_source_numbers(deck_state)
+        assert "14.8" in nums
+        assert "27.3" in nums
+        assert "4.0" in nums
+
+    def test_gathers_from_table_rows(self):
+        deck_state = {
+            "slides": [{
+                "shapes": [{
+                    "text": "",
+                    "rows": [
+                        [{"text": "Revenue"}, {"text": "13.1"}],
+                        [{"text": "EBITDA"}, {"text": "3.4"}],
+                    ]
+                }]
+            }]
+        }
+        nums = _collect_source_numbers(deck_state)
+        assert "13.1" in nums
+        assert "3.4" in nums
+
+    def test_empty_deck(self):
+        assert _collect_source_numbers({"slides": []}) == set()
+
+
+class TestCheckEditDeterministic:
+    def test_known_values_pass(self):
+        source_numbers = {"14.8", "27.3", "4.0", "18"}
+        edits = [
+            {"action": "edit_run", "slide_label": "slide_3",
+             "shape_name": "Revenue", "new_text": "$14.8M"},
+            {"action": "edit_table_cell", "slide_label": "slide_5",
+             "shape_name": "KPI Table", "new_text": "27.3%"},
+        ]
+        discrepancies = _check_edit_deterministic(edits, source_numbers)
+        assert discrepancies == []
+
+    def test_novel_value_flagged(self):
+        source_numbers = {"14.8", "27.3", "4.0"}
+        edits = [
+            {"action": "edit_run", "slide_label": "slide_3",
+             "shape_name": "Revenue", "new_text": "$99.9M"},
+        ]
+        discrepancies = _check_edit_deterministic(edits, source_numbers)
+        assert len(discrepancies) == 1
+        assert "99.9" in discrepancies[0]
+
+    def test_text_only_edit_passes(self):
+        """Edits with no numbers (e.g., changing 'Q2' to 'Q3') always pass."""
+        source_numbers = {"14.8"}
+        edits = [
+            {"action": "edit_run", "slide_label": "slide_5",
+             "shape_name": "Header", "new_text": "Q3 Results"},
+        ]
+        discrepancies = _check_edit_deterministic(edits, source_numbers)
+        assert discrepancies == []
+
+    def test_mixed_known_and_novel(self):
+        source_numbers = {"14.8", "4.0"}
+        edits = [
+            {"action": "edit_run", "slide_label": "slide_3",
+             "shape_name": "Rev", "new_text": "$14.8M"},
+            {"action": "edit_table_cell", "slide_label": "slide_5",
+             "shape_name": "Table", "new_text": "$999.0M"},
+        ]
+        discrepancies = _check_edit_deterministic(edits, source_numbers)
+        assert len(discrepancies) == 1
+        assert "999.0" in discrepancies[0]

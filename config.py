@@ -25,16 +25,20 @@ if _lic_path.exists():
     _license.set_license(str(_lic_path))
 
 # --- LLM Provider ---
-# "openai" or "anthropic"
+# "openai", "anthropic", or "local"
 LLM_PROVIDER = os.getenv("SSE_LLM_PROVIDER", "anthropic")
 
 # --- Model Names ---
 OPENAI_MODEL = os.getenv("SSE_OPENAI_MODEL", "gpt-4o-mini")
 ANTHROPIC_MODEL = os.getenv("SSE_ANTHROPIC_MODEL", "claude-opus-4-6")
+LOCAL_MODEL = os.getenv("SSE_LOCAL_MODEL", "qwen3.5-35b-a3b")
 
 # --- API Keys (read from environment) ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
+# --- Local LLM (LM Studio / Ollama / any OpenAI-compatible server) ---
+LOCAL_API_BASE = os.getenv("SSE_LOCAL_API_BASE", "http://localhost:1234/v1")
 
 # --- Pipeline Defaults ---
 MAX_LLM_RETRIES = 3

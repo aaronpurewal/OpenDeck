@@ -17,17 +17,15 @@ from state import harvest_deck, extract_shape, estimate_char_limit
 
 class TestEstimateCharLimit:
     def test_basic_calculation(self):
-        width_emu = 10 * 914400
-        height_emu = 2 * 914400
-        limit = estimate_char_limit(width_emu, height_emu)
+        # 720pt wide (10 inches) x 144pt tall (2 inches)
+        limit = estimate_char_limit(720, 144)
         assert limit > 0
         assert isinstance(limit, int)
 
     def test_larger_font_means_fewer_chars(self):
-        width = 5 * 914400
-        height = 2 * 914400
-        limit_small = estimate_char_limit(width, height, font_size_emu=12 * 12700)
-        limit_large = estimate_char_limit(width, height, font_size_emu=24 * 12700)
+        # 360pt wide x 144pt tall
+        limit_small = estimate_char_limit(360, 144, font_size_pt=12)
+        limit_large = estimate_char_limit(360, 144, font_size_pt=24)
         assert limit_small > limit_large
 
     def test_zero_dimensions(self):
@@ -35,9 +33,7 @@ class TestEstimateCharLimit:
         assert limit >= 0
 
     def test_no_font_size_uses_default(self):
-        width = 5 * 914400
-        height = 2 * 914400
-        limit = estimate_char_limit(width, height, font_size_emu=None)
+        limit = estimate_char_limit(360, 144, font_size_pt=None)
         assert limit > 0
 
 

@@ -4,13 +4,16 @@ Validation Layer: Post-execution checks.
 Three layers:
 1. Constraint enforcement (pre-generation, handled by char_limit in prompts)
 2. Placeholder detection (post-execution, deterministic, zero LLM calls)
-3. Data integrity check (post-generation, one LLM call for financial content)
+3. Data integrity check (post-generation):
+   a. Deterministic for edit actions (verify values exist in source data)
+   b. LLM call for fill actions (synthesized content needs judgment)
 
 Plus a smoke test: save → re-open → verify file integrity.
 """
 
 import json
 import math
+import re
 import aspose.slides as slides
 from config import PLACEHOLDER_PATTERNS
 
@@ -123,43 +126,109 @@ def check_brand(prs, slide_idx: int, brand_rules: dict) -> dict:
     }
 
 
+_NUMERIC_RE = re.compile(r"\d+[.,]\d+|\d{2,}")
+
+_EDIT_ACTIONS = {"edit_run", "edit_paragraph", "edit_table_cell", "edit_table_run"}
+
+
+def _extract_numbers(text: str) -> set[str]:
+    """Pull all numeric tokens from text for comparison."""
+    return set(_NUMERIC_RE.findall(text))
+
+
+def _collect_source_numbers(deck_state: dict) -> set[str]:
+    """Gather every number that appears anywhere in the deck state."""
+    all_text = []
+    for slide in deck_state.get("slides", []):
+        for shape in slide.get("shapes", []):
+            if shape.get("text"):
+                all_text.append(shape["text"])
+            for row in shape.get("rows", []):
+                for cell in row:
+                    cell_text = cell.get("text", "") if isinstance(cell, dict) else str(cell)
+                    if cell_text:
+                        all_text.append(cell_text)
+    return _extract_numbers(" ".join(all_text))
+
+
+def _check_edit_deterministic(edit_updates: list,
+                              source_numbers: set[str]) -> list[str]:
+    """
+    Deterministic check for edit actions: verify that every number in the
+    generated new_text already exists somewhere in the source deck.
+
+    Returns a list of discrepancy descriptions (empty = all clear).
+    """
+    discrepancies = []
+    for update in edit_updates:
+        new_text = update.get("new_text", "")
+        generated_nums = _extract_numbers(new_text)
+        novel = generated_nums - source_numbers
+        if novel:
+            discrepancies.append(
+                f"{update.get('action', 'edit')} on "
+                f"{update.get('slide_label', '?')}/{update.get('shape_name', '?')}: "
+                f"novel numbers {novel} not found in source data"
+            )
+    return discrepancies
+
+
 def validate_data_integrity(content_updates: list, deck_state: dict,
                             provider: str) -> dict:
     """
-    Compare generated content against source data using LLM.
-    Only called for slides containing financial/numerical content.
+    Compare generated content against source data.
+
+    Edit actions (edit_run, edit_paragraph, edit_table_cell, edit_table_run)
+    are checked deterministically — verify numbers exist in the source deck.
+    Fill actions (fill_placeholder, fill_table) use an LLM call because the
+    model synthesizes new prose from multiple data points.
     """
-    from llm import validate_data
+    edit_updates = [u for u in content_updates if u.get("action") in _EDIT_ACTIONS]
+    fill_updates = [u for u in content_updates if u.get("action") not in _EDIT_ACTIONS]
 
-    source_texts = []
-    generated_texts = []
+    all_discrepancies = []
 
-    for update in content_updates:
-        slide_label = update.get("slide_label", "")
-        for slide in deck_state.get("slides", []):
-            if slide.get("label") == slide_label:
-                for shape in slide.get("shapes", []):
-                    if shape.get("text"):
-                        source_texts.append(shape["text"])
-                break
-        if "text" in update:
-            generated_texts.append(update["text"])
-        elif "new_text" in update:
-            generated_texts.append(update["new_text"])
-        elif "rows" in update:
-            generated_texts.append(json.dumps(update["rows"]))
+    # Deterministic check for edits
+    if edit_updates:
+        source_numbers = _collect_source_numbers(deck_state)
+        all_discrepancies.extend(
+            _check_edit_deterministic(edit_updates, source_numbers)
+        )
 
-    if not source_texts or not generated_texts:
-        return {"accurate": True, "discrepancies": []}
+    # LLM check for fills (synthesized content needs judgment)
+    if fill_updates:
+        from llm import validate_data
 
-    source_json = json.dumps(source_texts, indent=2)
-    generated_text = "\n".join(generated_texts)
+        source_texts = []
+        generated_texts = []
 
-    try:
-        return validate_data(source_json, generated_text, provider)
-    except Exception as e:
-        return {"accurate": True,
-                "discrepancies": [f"Validation call failed: {str(e)}"]}
+        for update in fill_updates:
+            slide_label = update.get("slide_label", "")
+            for slide in deck_state.get("slides", []):
+                if slide.get("label") == slide_label:
+                    for shape in slide.get("shapes", []):
+                        if shape.get("text"):
+                            source_texts.append(shape["text"])
+                    break
+            if "text" in update:
+                generated_texts.append(update["text"])
+            elif "rows" in update:
+                generated_texts.append(json.dumps(update["rows"]))
+
+        if source_texts and generated_texts:
+            source_json = json.dumps(source_texts, indent=2)
+            generated_text = "\n".join(generated_texts)
+            try:
+                result = validate_data(source_json, generated_text, provider)
+                if not result.get("accurate", True):
+                    all_discrepancies.extend(result.get("discrepancies", []))
+            except Exception as e:
+                all_discrepancies.append(f"Validation call failed: {str(e)}")
+
+    return {
+        "accurate": len(all_discrepancies) == 0,
+        "discrepancies": all_discrepancies
+    }
 
 
 def smoke_test(output_path: str) -> dict:

@@ -11,6 +11,10 @@ import math
 import unicodedata
 import aspose.slides as slides
 import aspose.slides.charts as charts
+try:
+    import aspose.pydrawing as drawing
+except ImportError:
+    drawing = None
 from state import harvest_deck, extract_shape, estimate_char_limit
 
 
@@ -213,6 +217,77 @@ def _truncate_to_fit(text: str, char_limit: int) -> str:
     if last_space > cutoff * 0.5:
         truncated = truncated[:last_space]
     return truncated + "..."
+
+
+# ---------------------------------------------------------------------------
+# Chart / Table Constants
+# ---------------------------------------------------------------------------
+
+def _inches(n: float) -> int:
+    """Convert inches to EMU (English Metric Units)."""
+    return int(n * 914400)
+
+
+_POSITION_SLOTS = {
+    "center":      (_inches(0.8), _inches(1.8), _inches(8.4), _inches(4.8)),
+    "left_half":   (_inches(0.5), _inches(1.8), _inches(4.5), _inches(4.8)),
+    "right_half":  (_inches(5.2), _inches(1.8), _inches(4.5), _inches(4.8)),
+    "bottom_half": (_inches(0.5), _inches(3.6), _inches(9.0), _inches(3.2)),
+}
+
+_CHART_TYPE_MAP = {
+    "clustered_bar":    charts.ChartType.CLUSTERED_BAR,
+    "stacked_bar":      charts.ChartType.STACKED_BAR,
+    "line":             charts.ChartType.LINE,
+    "pie":              charts.ChartType.PIE,
+    "doughnut":         charts.ChartType.DOUGHNUT,
+    "clustered_column": charts.ChartType.CLUSTERED_COLUMN,
+}
+
+_DATAPOINT_METHOD = {
+    "clustered_bar":    "add_data_point_for_bar_series",
+    "stacked_bar":      "add_data_point_for_bar_series",
+    "clustered_column": "add_data_point_for_bar_series",
+    "line":             "add_data_point_for_line_series",
+    "pie":              "add_data_point_for_pie_series",
+    "doughnut":         "add_data_point_for_doughnut_series",
+}
+
+
+def _get_theme_colors(prs) -> list[str]:
+    """Extract accent colors 1-6 from master theme as hex strings."""
+    colors = []
+    try:
+        master = prs.masters[0]
+        scheme = master.theme_manager.effective_theme.color_scheme
+        for attr in ["accent1", "accent2", "accent3", "accent4", "accent5", "accent6"]:
+            try:
+                color = getattr(scheme, attr)
+                colors.append(f"#{color.r:02x}{color.g:02x}{color.b:02x}")
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return colors
+
+
+def _apply_theme_to_chart(chart, theme_colors: list[str]):
+    """Apply theme accent colors to chart series fill."""
+    if not drawing:
+        return
+    for i in range(chart.chart_data.series.count):
+        if i >= len(theme_colors):
+            break
+        try:
+            series = chart.chart_data.series[i]
+            hex_color = theme_colors[i]
+            r = int(hex_color[1:3], 16)
+            g = int(hex_color[3:5], 16)
+            b = int(hex_color[5:7], 16)
+            series.format.fill.fill_type = slides.FillType.SOLID
+            series.format.fill.solid_fill_color.color = drawing.Color.from_argb(r, g, b)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -742,3 +817,170 @@ def update_chart(prs, slide_idx: int, shape_name: str, series: dict) -> dict:
         return {"status": "ok", "slide_idx": slide_idx, "shape": shape_name}
     except Exception as e:
         return {"status": "error", "message": f"Chart update failed: {str(e)}"}
+
+
+# ---------------------------------------------------------------------------
+# Content — CREATE (new charts and tables from scratch)
+# ---------------------------------------------------------------------------
+
+def create_chart(prs, slide_idx: int, chart_type: str, title: str,
+                 categories: list[str], series: list[dict],
+                 position: str = "center") -> dict:
+    """
+    Create a chart on the given slide.
+
+    series = [{"name": "Revenue", "values": [100, 200, 300]}, ...]
+    Returns {"status": "ok", "shape_name": "...", "chart_type": "..."} or error dict.
+    """
+    if chart_type not in _CHART_TYPE_MAP:
+        return {"status": "error",
+                "message": f"Unknown chart type: {chart_type}. "
+                           f"Allowed: {list(_CHART_TYPE_MAP.keys())}"}
+    if position not in _POSITION_SLOTS:
+        return {"status": "error",
+                "message": f"Unknown position: {position}. "
+                           f"Allowed: {list(_POSITION_SLOTS.keys())}"}
+    if slide_idx < 0 or slide_idx >= len(prs.slides):
+        return {"status": "error", "message": f"Slide index {slide_idx} out of range"}
+
+    slide = prs.slides[slide_idx]
+    ct = _CHART_TYPE_MAP[chart_type]
+    x, y, w, h = _POSITION_SLOTS[position]
+
+    try:
+        chart_obj = slide.shapes.add_chart(ct, x, y, w, h, True)
+
+        # Clear default sample data
+        chart_obj.chart_data.series.clear()
+        chart_obj.chart_data.categories.clear()
+
+        wb = chart_obj.chart_data.chart_data_workbook
+
+        # Add categories
+        for i, cat_name in enumerate(categories):
+            chart_obj.chart_data.categories.add(wb.get_cell(0, i + 1, 0, cat_name))
+
+        # Add series with appropriate datapoint method
+        dp_method = _DATAPOINT_METHOD.get(chart_type, "add_data_point_for_bar_series")
+        for s_idx, s_data in enumerate(series):
+            ser = chart_obj.chart_data.series.add(
+                wb.get_cell(0, 0, s_idx + 1, s_data["name"]), ct
+            )
+            for i, val in enumerate(s_data["values"]):
+                cell = wb.get_cell(0, i + 1, s_idx + 1, val)
+                getattr(ser.data_points, dp_method)(cell)
+
+        # Set chart title
+        try:
+            chart_obj.has_title = True
+            chart_obj.chart_title.add_text_frame_for_overriding(title)
+        except Exception:
+            pass
+
+        # Apply theme colors
+        theme_colors = _get_theme_colors(prs)
+        if theme_colors:
+            _apply_theme_to_chart(chart_obj, theme_colors)
+
+        return {"status": "ok", "shape_name": chart_obj.name,
+                "chart_type": chart_type}
+    except Exception as e:
+        return {"status": "error", "message": f"Chart creation failed: {str(e)}"}
+
+
+def create_table(prs, slide_idx: int, headers: list[str],
+                 rows: list[list[str]], position: str = "center",
+                 col_widths: list[float] | None = None) -> dict:
+    """
+    Create a table on the given slide.
+
+    col_widths: optional list of column widths in inches.
+    Returns {"status": "ok", "shape_name": "...", "rows": N, "cols": M} or error dict.
+    """
+    if position not in _POSITION_SLOTS:
+        return {"status": "error",
+                "message": f"Unknown position: {position}. "
+                           f"Allowed: {list(_POSITION_SLOTS.keys())}"}
+    if slide_idx < 0 or slide_idx >= len(prs.slides):
+        return {"status": "error", "message": f"Slide index {slide_idx} out of range"}
+
+    slide = prs.slides[slide_idx]
+    x, y, w, h = _POSITION_SLOTS[position]
+    n_cols = len(headers)
+    n_rows = len(rows) + 1  # +1 for header row
+
+    if col_widths:
+        col_widths_emu = [_inches(cw) for cw in col_widths]
+    else:
+        col_width = w // n_cols
+        col_widths_emu = [col_width] * n_cols
+
+    row_height = min(_inches(0.4), h // n_rows)
+    row_heights_emu = [row_height] * n_rows
+
+    try:
+        table = slide.shapes.add_table(x, y, col_widths_emu, row_heights_emu)
+
+        # Populate header row with bold formatting
+        for col_idx, header_text in enumerate(headers):
+            if col_idx >= len(table.columns):
+                break
+            cell = table.rows[0][col_idx]
+            tf = _safe_text_frame(cell)
+            if tf and tf.paragraphs.count > 0:
+                para = tf.paragraphs[0]
+                if para.portions.count > 0:
+                    para.portions[0].text = str(header_text)
+                    try:
+                        para.portions[0].portion_format.font_bold = slides.NullableBool.TRUE
+                    except Exception:
+                        pass
+                else:
+                    portion = slides.Portion()
+                    portion.text = str(header_text)
+                    try:
+                        portion.portion_format.font_bold = slides.NullableBool.TRUE
+                    except Exception:
+                        pass
+                    para.portions.add(portion)
+
+            # Apply theme color to header cell background
+            theme_colors = _get_theme_colors(prs)
+            if theme_colors and drawing:
+                try:
+                    hex_color = theme_colors[0]
+                    r = int(hex_color[1:3], 16)
+                    g = int(hex_color[3:5], 16)
+                    b = int(hex_color[5:7], 16)
+                    cell.fill_format.fill_type = slides.FillType.SOLID
+                    cell.fill_format.solid_fill_color.color = drawing.Color.from_argb(r, g, b)
+                except Exception:
+                    pass
+
+        # Populate data rows
+        for row_idx, row_data in enumerate(rows):
+            actual_row = row_idx + 1  # skip header
+            if actual_row >= len(table.rows):
+                break
+            if not isinstance(row_data, list):
+                continue
+            for col_idx, cell_value in enumerate(row_data):
+                if col_idx >= len(table.columns):
+                    break
+                if cell_value is None:
+                    continue
+                cell = table.rows[actual_row][col_idx]
+                tf = _safe_text_frame(cell)
+                if tf and tf.paragraphs.count > 0:
+                    para = tf.paragraphs[0]
+                    if para.portions.count > 0:
+                        para.portions[0].text = str(cell_value)
+                    else:
+                        portion = slides.Portion()
+                        portion.text = str(cell_value)
+                        para.portions.add(portion)
+
+        return {"status": "ok", "shape_name": table.name,
+                "rows": n_rows, "cols": n_cols}
+    except Exception as e:
+        return {"status": "error", "message": f"Table creation failed: {str(e)}"}
