@@ -50,7 +50,7 @@ The LLM never knows it's editing PowerPoint. It receives/returns structured JSON
 - **Donor cloning**: `clone_slide` finds an existing slide using the same layout, duplicates it, then clears text. This preserves designer formatting that `insert_empty_slide` loses.
 - **Template paragraph**: `fill_placeholder` finds the first bullet paragraph with indent to use as formatting template for all new content paragraphs.
 - **Evaluation watermarks**: Aspose eval version injects "Created with Aspose" watermarks and truncates text. Tests detect this with `_EVAL_MODE`.
-- **Table dimension × 12700 bug**: Aspose's `add_table()` multiplies col_widths and row_heights by 12,700 during XML serialization. Pass EMU values divided by 12,700 (`_TBL_DIV`), NOT raw EMU. The x/y position params are NOT affected.
+- **Points, not EMU**: Aspose's shape creation methods (`add_chart`, `add_table`, `add_auto_shape`) take coordinates in **points** (1/72 inch), not EMU. Aspose multiplies by 12,700 during serialization to get EMU. `_inches(n) = n * 72.0`, NOT `n * 914400`.
 - **Chart init_with_sample_data**: Use `add_chart(..., False)` then `wb.clear(0)` — using `True` leaves ghost data in the embedded Excel workbook that causes PowerPoint to reject the file.
 
 ## Label System
