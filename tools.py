@@ -848,13 +848,16 @@ def create_chart(prs, slide_idx: int, chart_type: str, title: str,
     x, y, w, h = _POSITION_SLOTS[position]
 
     try:
-        chart_obj = slide.shapes.add_chart(ct, x, y, w, h, True)
-
-        # Clear default sample data
-        chart_obj.chart_data.series.clear()
-        chart_obj.chart_data.categories.clear()
+        # Use False to avoid stale sample data in the embedded workbook —
+        # PowerPoint cross-validates chart XML against the workbook and
+        # leftover ghost data from True + clear() causes corruption.
+        chart_obj = slide.shapes.add_chart(ct, x, y, w, h, False)
 
         wb = chart_obj.chart_data.chart_data_workbook
+        try:
+            wb.clear(0)
+        except Exception:
+            pass
 
         # Add categories
         for i, cat_name in enumerate(categories):
@@ -870,12 +873,20 @@ def create_chart(prs, slide_idx: int, chart_type: str, title: str,
                 cell = wb.get_cell(0, i + 1, s_idx + 1, val)
                 getattr(ser.data_points, dp_method)(cell)
 
-        # Set chart title
-        try:
-            chart_obj.has_title = True
-            chart_obj.chart_title.add_text_frame_for_overriding(title)
-        except Exception:
-            pass
+        # Set chart title — use add_text_frame_for_overriding only if title
+        # is provided, then set overlay=False for standard PowerPoint layout
+        if title:
+            try:
+                chart_obj.has_title = True
+                chart_obj.chart_title.add_text_frame_for_overriding(title)
+                chart_obj.chart_title.overlay = False
+            except Exception:
+                pass
+        else:
+            try:
+                chart_obj.has_title = False
+            except Exception:
+                pass
 
         # Apply theme colors
         theme_colors = _get_theme_colors(prs)
@@ -909,17 +920,20 @@ def create_table(prs, slide_idx: int, headers: list[str],
     n_cols = len(headers)
     n_rows = len(rows) + 1  # +1 for header row
 
+    # Aspose's add_table multiplies col_widths/row_heights by 12700 during
+    # XML serialization, so divide EMU values by 12700 to get correct output.
+    # x, y position params are NOT affected — only widths and heights.
+    _TBL_DIV = 12700
     if col_widths:
-        col_widths_emu = [_inches(cw) for cw in col_widths]
+        col_widths_adj = [_inches(cw) / _TBL_DIV for cw in col_widths]
     else:
-        col_width = w // n_cols
-        col_widths_emu = [col_width] * n_cols
+        col_widths_adj = [w / _TBL_DIV / n_cols] * n_cols
 
     row_height = min(_inches(0.4), h // n_rows)
-    row_heights_emu = [row_height] * n_rows
+    row_heights_adj = [row_height / _TBL_DIV] * n_rows
 
     try:
-        table = slide.shapes.add_table(x, y, col_widths_emu, row_heights_emu)
+        table = slide.shapes.add_table(x, y, col_widths_adj, row_heights_adj)
 
         # Populate header row with bold formatting
         for col_idx, header_text in enumerate(headers):
