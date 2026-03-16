@@ -31,6 +31,75 @@ _ACTION_TO_SHAPE_TYPE = {
 }
 
 
+def _remap_content_shapes(content: dict, plan: dict, post_state: dict,
+                          cloned_labels: set):
+    """
+    Fix content output shape names using the already-remapped manifest.
+
+    The content LLM (especially weaker local models) often ignores the
+    instruction to use document-state shape names and outputs layout
+    placeholder names instead (e.g. "Holder 2" instead of "object 2").
+
+    Strategy: for each content_update targeting a cloned slide, find the
+    matching manifest entry (by slide_label + action + position index)
+    and copy its remapped shape_name.
+    """
+    # Build label → actual shape names from post-structural state
+    slide_lookup = {}
+    label_list = post_state.get("label_list", [])
+    slides_data = post_state.get("slides", [])
+    for i, label in enumerate(label_list):
+        if i < len(slides_data):
+            slide_lookup[label] = {
+                s["name"] for s in slides_data[i].get("shapes", [])
+            }
+
+    manifest = plan.get("content_manifest", [])
+
+    for update in content.get("content_updates", []):
+        slide_label = update.get("slide_label", "")
+        if slide_label not in cloned_labels:
+            continue
+
+        actual_names = slide_lookup.get(slide_label, set())
+        action = update.get("action", "")
+
+        # Skip actions that create new shapes (no shape_name to fix)
+        if action in ("create_chart", "create_table"):
+            continue
+
+        # If the shape name already exists on the slide, no fix needed
+        if update.get("shape_name", "") in actual_names:
+            continue
+
+        # Find the matching manifest entry by slide_label + action type
+        # + position index (nth action of this type for this slide)
+        target_type = _ACTION_TO_SHAPE_TYPE.get(action)
+        if not target_type:
+            continue
+
+        # Count this update's position index among same slide+type updates
+        update_idx = 0
+        for prev in content.get("content_updates", []):
+            if prev is update:
+                break
+            if (prev.get("slide_label") == slide_label and
+                    _ACTION_TO_SHAPE_TYPE.get(prev.get("action", "")) == target_type):
+                update_idx += 1
+
+        # Find the matching manifest entry at the same position index
+        manifest_idx = 0
+        for m_entry in manifest:
+            if (m_entry.get("slide_label") == slide_label and
+                    _ACTION_TO_SHAPE_TYPE.get(m_entry.get("action", "")) == target_type):
+                if manifest_idx == update_idx:
+                    remapped_name = m_entry.get("shape_name", "")
+                    if remapped_name and remapped_name in actual_names:
+                        update["shape_name"] = remapped_name
+                    break
+                manifest_idx += 1
+
+
 def _remap_manifest_shapes(plan: dict, post_state: dict, cloned_labels: set):
     """
     Fix manifest shape names for cloned slides after donor cloning.
@@ -191,6 +260,13 @@ def step3_execute(plan: dict, deck_state: dict, prs,
     if content is None:
         return {"status": "error",
                 "message": "LLM failed to generate content after retries"}
+
+    # --- Fix content shape names for cloned slides ---
+    # The content LLM (especially local models) often outputs layout
+    # placeholder names instead of actual post-clone shape names.
+    # Correct them using the already-remapped manifest as ground truth.
+    if cloned_labels:
+        _remap_content_shapes(content, plan, post_struct_state, cloned_labels)
 
     # --- Phase C: Execute content updates (Aspose, instant) ---
     content_plan = {
