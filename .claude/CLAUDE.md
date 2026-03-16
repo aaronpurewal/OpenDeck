@@ -8,7 +8,7 @@ LLM-powered PowerPoint editing via Aspose.Slides for Python. Transforms user ins
 |-------|-------|---------------|-------------|
 | **Tools** | `tools.py` | All Aspose read/write operations | Never |
 | **Executor** | `executor.py` | Deterministic plan execution, label resolution | Never |
-| **LLM** | `llm.py`, `prompts.py` | Model calls, JSON extraction, prompt templates | Only layer |
+| **LLM** | `llm.py`, `prompts.py` | Model calls, tool use schemas, prompt templates | Only layer |
 | **State** | `state.py` | Deck harvesting, shape extraction, char_limit estimation | Never |
 | **Pipeline** | `pipeline.py` | Orchestrates the 3-step flow (harvest → plan → execute) | Calls LLM layer |
 | **Validation** | `validation.py` | Post-execution checks (placeholders, data integrity, smoke test) | LLM call for fill validation only; edit validation is deterministic |
@@ -50,6 +50,8 @@ The LLM never knows it's editing PowerPoint. It receives/returns structured JSON
 - **Donor cloning**: `clone_slide` finds an existing slide using the same layout, duplicates it, then clears text. This preserves designer formatting that `insert_empty_slide` loses.
 - **Template paragraph**: `fill_placeholder` finds the first bullet paragraph with indent to use as formatting template for all new content paragraphs.
 - **Evaluation watermarks**: Aspose eval version injects "Created with Aspose" watermarks and truncates text. Tests detect this with `_EVAL_MODE`.
+- **Table dimension × 12700 bug**: Aspose's `add_table()` multiplies col_widths and row_heights by 12,700 during XML serialization. Pass EMU values divided by 12,700 (`_TBL_DIV`), NOT raw EMU. The x/y position params are NOT affected.
+- **Chart init_with_sample_data**: Use `add_chart(..., False)` then `wb.clear(0)` — using `True` leaves ghost data in the embedded Excel workbook that causes PowerPoint to reject the file.
 
 ## Label System
 
@@ -65,6 +67,17 @@ The LLM never knows it's editing PowerPoint. It receives/returns structured JSON
 1. **step1_harvest**: Load PPTX → `harvest_deck()` → state dict
 2. **step2_plan** (LLM Pass 1): state + instruction → structural plan + content manifest
 3. **step3_execute**: structural changes → re-harvest → remap shapes → content generation (LLM Pass 2) → content execution → validate → save
+
+## Structured Output via Tool Use
+
+All LLM calls use **forced tool use** for guaranteed schema-compliant JSON. The LLM "calls" a tool whose input schema defines the expected output structure — no text-based JSON parsing needed.
+
+- **3 tool schemas** in `llm.py`: `PLAN_SCHEMA`, `CONTENT_SCHEMA`, `VALIDATION_SCHEMA`
+- **Anthropic**: `tool_choice={"type": "tool", "name": "..."}` — forced specific tool, returns parsed dict via `block.input`
+- **OpenAI**: `tool_choice={"type": "function", "function": {"name": "..."}}` — returns JSON string via `tool_call.function.arguments`
+- **Local (LM Studio)**: `tool_choice="required"` (LM Studio doesn't support forced-name format) — with one tool defined, effectively forces it
+- **Enums enforced at API level**: action types, chart_type (6 values), position (4 slots)
+- **Fallback**: `_extract_json()` text parser still exists for edge cases where tool use fails
 
 ## Git Conventions
 
