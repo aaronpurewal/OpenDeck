@@ -223,9 +223,13 @@ def _truncate_to_fit(text: str, char_limit: int) -> str:
 # Chart / Table Constants
 # ---------------------------------------------------------------------------
 
-def _inches(n: float) -> int:
-    """Convert inches to EMU (English Metric Units)."""
-    return int(n * 914400)
+def _inches(n: float) -> float:
+    """Convert inches to Aspose coordinate units (points, 1/72 inch).
+
+    Aspose.Slides for Python takes x/y/w/h in points, then multiplies
+    by 12,700 to get EMU during OOXML serialization. NOT raw EMU.
+    """
+    return n * 72.0
 
 
 _POSITION_SLOTS = {
@@ -920,20 +924,16 @@ def create_table(prs, slide_idx: int, headers: list[str],
     n_cols = len(headers)
     n_rows = len(rows) + 1  # +1 for header row
 
-    # Aspose's add_table multiplies col_widths/row_heights by 12700 during
-    # XML serialization, so divide EMU values by 12700 to get correct output.
-    # x, y position params are NOT affected — only widths and heights.
-    _TBL_DIV = 12700
     if col_widths:
-        col_widths_adj = [_inches(cw) / _TBL_DIV for cw in col_widths]
+        col_widths_pts = [_inches(cw) for cw in col_widths]
     else:
-        col_widths_adj = [w / _TBL_DIV / n_cols] * n_cols
+        col_widths_pts = [w / n_cols] * n_cols
 
-    row_height = min(_inches(0.4), h // n_rows)
-    row_heights_adj = [row_height / _TBL_DIV] * n_rows
+    row_height = min(_inches(0.4), h / n_rows)
+    row_heights_pts = [row_height] * n_rows
 
     try:
-        table = slide.shapes.add_table(x, y, col_widths_adj, row_heights_adj)
+        table = slide.shapes.add_table(x, y, col_widths_pts, row_heights_pts)
 
         # Populate header row with bold formatting
         for col_idx, header_text in enumerate(headers):

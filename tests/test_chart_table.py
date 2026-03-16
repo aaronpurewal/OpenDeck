@@ -45,13 +45,13 @@ def prs():
 
 class TestInchesHelper:
     def test_one_inch(self):
-        assert _inches(1) == 914400
+        assert _inches(1) == 72.0  # 72 points per inch
 
     def test_zero(self):
         assert _inches(0) == 0
 
     def test_fractional(self):
-        assert _inches(0.5) == 457200
+        assert _inches(0.5) == 36.0  # 36 points = 0.5 inches
 
 
 class TestPositionSlots:
