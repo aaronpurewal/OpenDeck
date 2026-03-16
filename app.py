@@ -11,6 +11,7 @@ import streamlit.components.v1 as components
 import json
 import os
 import base64
+import time
 import tempfile
 from io import BytesIO
 
@@ -45,6 +46,14 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "auto_approve" not in st.session_state:
     st.session_state.auto_approve = False
+if "timer_start" not in st.session_state:
+    st.session_state.timer_start = None
+if "timer_paused_at" not in st.session_state:
+    st.session_state.timer_paused_at = None
+if "timer_paused_total" not in st.session_state:
+    st.session_state.timer_paused_total = 0.0
+if "timer_final" not in st.session_state:
+    st.session_state.timer_final = None
 
 
 def render_slide_thumbnails(prs):
@@ -76,6 +85,75 @@ def _auto_download(file_path: str, file_name: str):
         f'<script>document.getElementById("auto-dl").click();</script>'
     )
     components.html(html, height=0)
+
+
+def _timer_elapsed() -> float:
+    """Calculate elapsed seconds excluding paused time."""
+    if st.session_state.timer_start is None:
+        return 0.0
+    now = time.time()
+    elapsed = now - st.session_state.timer_start - st.session_state.timer_paused_total
+    if st.session_state.timer_paused_at:
+        elapsed -= (now - st.session_state.timer_paused_at)
+    return max(0.0, elapsed)
+
+
+def _render_stopwatch(running: bool):
+    """Render a JS-based stopwatch that ticks in the browser."""
+    elapsed = _timer_elapsed()
+    if running:
+        color = "#ff6b35"
+        label = ""
+    else:
+        color = "#888"
+        label = " (paused)"
+    html = f"""
+    <div id="sw" style="font-family:monospace;font-size:1.1em;color:{color};padding:4px 0;">
+        ⏱ {elapsed:.1f}s{label}
+    </div>
+    <script>
+    (function() {{
+        var offset = {elapsed};
+        var running = {'true' if running else 'false'};
+        var start = performance.now();
+        function tick() {{
+            if (!running) return;
+            var now = performance.now();
+            var el = document.getElementById('sw');
+            if (el) el.innerText = '⏱ ' + (offset + (now - start) / 1000).toFixed(1) + 's';
+            requestAnimationFrame(tick);
+        }}
+        tick();
+    }})();
+    </script>
+    """
+    components.html(html, height=36)
+
+
+def _timer_start():
+    """Start/reset the stopwatch."""
+    st.session_state.timer_start = time.time()
+    st.session_state.timer_paused_at = None
+    st.session_state.timer_paused_total = 0.0
+    st.session_state.timer_final = None
+
+
+def _timer_pause():
+    """Pause the stopwatch."""
+    if st.session_state.timer_paused_at is None:
+        st.session_state.timer_paused_at = time.time()
+
+
+def _timer_resume():
+    """Resume the stopwatch after pause."""
+    if st.session_state.timer_paused_at is not None:
+        st.session_state.timer_paused_total += time.time() - st.session_state.timer_paused_at
+        st.session_state.timer_paused_at = None
+
+
+def _timer_stop():
+    """Stop the stopwatch and record final time."""
+    st.session_state.timer_final = _timer_elapsed()
 
 
 # --- Header ---
@@ -201,10 +279,12 @@ with right_col:
         )
         user_input = st.chat_input("What should I do with this deck?")
         if user_input:
+            _timer_start()
             st.session_state.messages.append({"role": "user", "content": user_input})
             with st.chat_message("user"):
                 st.markdown(user_input)
 
+            _render_stopwatch(running=True)
             with st.chat_message("assistant"):
                 with st.spinner("Generating plan (Pass 1)..."):
                     plan = step2_plan(
@@ -262,11 +342,14 @@ with right_col:
 
     # --- REVIEW PHASE ---
     if st.session_state.phase == "review":
+        _timer_pause()
+        _render_stopwatch(running=False)
         st.divider()
         col_approve, col_edit, col_reset = st.columns(3)
 
         with col_approve:
             if st.button("Approve Plan", type="primary", use_container_width=True):
+                _timer_resume()
                 st.session_state.phase = "executing"
                 st.rerun()
 
@@ -295,6 +378,7 @@ with right_col:
             if st.button("Save & Approve", type="primary", use_container_width=True):
                 try:
                     st.session_state.plan = json.loads(edited_plan_str)
+                    _timer_resume()
                     st.session_state.phase = "executing"
                     st.rerun()
                 except json.JSONDecodeError as e:
@@ -307,6 +391,7 @@ with right_col:
     # --- EXECUTING PHASE ---
     if st.session_state.phase == "executing":
         st.divider()
+        _render_stopwatch(running=True)
         progress = st.progress(0)
         status_text = st.empty()
 
@@ -332,6 +417,7 @@ with right_col:
 
         if result["status"] == "complete":
             progress.progress(100)
+            _timer_stop()
             st.session_state.output_path = result["output_path"]
             st.session_state.execution_log = result
             st.session_state.phase = "done"
@@ -381,7 +467,11 @@ with right_col:
     # --- DONE PHASE ---
     if st.session_state.phase == "done":
         st.divider()
-        st.success("Deck transformation complete!")
+        final = st.session_state.timer_final
+        if final is not None:
+            st.success(f"Deck transformation complete! ⏱ {final:.1f}s")
+        else:
+            st.success("Deck transformation complete!")
 
         # Auto-download the result file
         if st.session_state.output_path and os.path.exists(st.session_state.output_path):
@@ -404,6 +494,8 @@ with right_col:
             st.session_state.plan = None
             st.session_state.execution_log = None
             st.session_state.output_path = None
+            st.session_state.timer_start = None
+            st.session_state.timer_final = None
             st.rerun()
 
         if st.button("Upload New Deck", use_container_width=True):
@@ -411,6 +503,8 @@ with right_col:
                        "output_path", "input_path", "messages"]:
                 if key in st.session_state:
                     del st.session_state[key]
+            st.session_state.timer_start = None
+            st.session_state.timer_final = None
             st.session_state.phase = "upload"
             st.rerun()
 
