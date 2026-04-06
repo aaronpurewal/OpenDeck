@@ -2,9 +2,23 @@
 
 LLM-powered PowerPoint editing that preserves your formatting. Give it a natural language instruction, and it surgically modifies exactly what you asked for — no regeneration, no lost formatting, no broken themes.
 
-## What It Does
+## Why This Is Different
 
-Most AI slide tools regenerate decks from scratch, destroying designer formatting in the process. This engine takes the opposite approach: it treats your existing PPTX as sacred and only touches what you ask it to change.
+Every AI slide tool on the market today — Gamma, Beautiful.ai, Tome, SlidesAI — **regenerates your entire deck from scratch**. That means:
+
+- Your designer's carefully chosen fonts, colors, and layouts? Gone.
+- Your company's branded template with custom master slides? Destroyed.
+- Your 40-slide board deck that just needs one number updated? Completely rebuilt from zero.
+
+**This engine does the opposite.** It reads your existing PPTX, understands every shape on every slide, and only touches exactly what you ask it to change. Everything else stays pixel-perfect.
+
+**It's faster.** A two-pass architecture means the LLM only generates a lightweight plan first (~3 seconds), then you approve before the heavier content generation runs. No wasted compute on bad ideas.
+
+**It's more secure.** Run it with a local model (Qwen, LLaMA, DeepSeek via LM Studio) and **your data never leaves your machine**. No slides uploaded to third-party servers. No API calls to cloud providers. Your confidential board decks, M&A materials, and client deliverables stay on your hardware. Zero data exposure.
+
+**It's architecturally sound.** The LLM never sees your PowerPoint file. It receives abstract JSON and returns abstract JSON. A deterministic executor translates those instructions into precise Aspose operations. The AI decides *what* to change; the code decides *how* — no hallucinated Python, no corrupted files.
+
+## What It Does
 
 - Upload any `.pptx` file
 - Describe what you want changed in plain English
@@ -117,9 +131,15 @@ streamlit run app.py
 
 Open `http://localhost:8501` in your browser. Upload a PPTX, type an instruction, review the plan, approve, and download.
 
-### Aspose License (Optional)
+### Aspose License (Required)
 
-Without a license, Aspose runs in evaluation mode (adds watermarks, truncates text). If you have a license file, place it in the project root as `Aspose Temporary License.lic` — it's auto-detected on startup.
+An Aspose license is required — without it, the evaluation mode adds watermarks and truncates text, making the output unusable. The good news: **temporary licenses are free and take 30 seconds to get.**
+
+1. Go to [https://purchase.aspose.com/temporary-license](https://purchase.aspose.com/temporary-license)
+2. Fill in your email and request a temporary license
+3. Download the `.lic` file and place it in the project root as `Aspose Temporary License.lic`
+
+It's auto-detected on startup. No configuration needed.
 
 ## Configuration
 
