@@ -1,4 +1,4 @@
-# Surgical Slide Engine
+# OpenDeck
 
 LLM-powered PowerPoint editing that preserves your formatting. Give it a natural language instruction, and it surgically modifies exactly what you asked for — no regeneration, no lost formatting, no broken themes.
 
@@ -92,8 +92,8 @@ The core design principle is a strict 3-layer separation:
 ### Install
 
 ```bash
-git clone https://github.com/aaronpurewal/APTX_CC.git
-cd APTX_CC
+git clone https://github.com/aaronpurewal/OpenDeck.git
+cd OpenDeck
 pip install -r requirements.txt
 ```
 
@@ -185,7 +185,7 @@ Tests use real Aspose objects (no mocking) because the .NET bridge behavior is t
 ## Project Structure
 
 ```
-APTX_CC/
+OpenDeck/
 |-- app.py              Streamlit web UI
 |-- pipeline.py         3-step orchestration (harvest -> plan -> execute)
 |-- llm.py              Model-agnostic LLM wrapper + tool schemas

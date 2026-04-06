@@ -1,5 +1,5 @@
 """
-Configuration for the Surgical Slide Engine.
+Configuration for the OpenDeck.
 
 Centralizes API keys, model names, provider selection, and default parameters.
 Environment variables take precedence over defaults.

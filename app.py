@@ -1,5 +1,5 @@
 """
-Streamlit UI: Surgical Slide Engine.
+Streamlit UI: OpenDeck.
 
 Two-column layout:
   Left:  Upload + deck preview (slide thumbnails)
@@ -20,7 +20,7 @@ from config import LLM_PROVIDER, DEFAULT_OUTPUT_DIR, LOCAL_API_BASE
 
 # --- Page Config ---
 st.set_page_config(
-    page_title="Surgical Slide Engine",
+    page_title="OpenDeck",
     page_icon="🔬",
     layout="wide"
 )
@@ -561,7 +561,7 @@ st.markdown("""
                 <span style="color:white; font-size:16px;">&#9638;</span>
             </div>
             <span style="color:#FAFAFA; font-size:16px; font-weight:700;
-                letter-spacing:-0.02em;">Surgical Slide Engine</span>
+                letter-spacing:-0.02em;">OpenDeck</span>
         </div>
         <span style="background:#3F3F46; color:#A1A1AA;
             padding:4px 12px; border-radius:20px; font-size:11px; font-weight:500;">v1.0</span>
