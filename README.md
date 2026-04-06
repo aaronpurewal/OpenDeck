@@ -1,22 +1,40 @@
 # OpenDeck
 
-LLM-powered PowerPoint editing that preserves your formatting. Give it a natural language instruction, and it surgically modifies exactly what you asked for — no regeneration, no lost formatting, no broken themes.
+LLM-powered PowerPoint editing that **perfectly matches your slide master**. Give it a natural language instruction, and it surgically modifies exactly what you ask — every font, color, margin, and bullet style stays pixel-perfect.
+
+## The Problem
+
+If you've worked in consulting or finance, you know: **slide formatting is sacred.** A McKinsey deck has specific fonts. A Goldman pitch book has exact margins. A Deloitte deliverable follows a rigid brand template down to the bullet indent level. Getting these wrong isn't a cosmetic issue — it's a credibility issue.
+
+Right now, an analyst spends hours manually updating slides — changing a revenue figure, adding an executive summary, restructuring a section — all while painstakingly preserving the formatting that took a design team weeks to build.
+
+Every AI slide tool on the market today — Gamma, Beautiful.ai, Tome, SlidesAI — **regenerates your entire deck from scratch.** That means:
+
+- Your firm's branded master slides with custom fonts, colors, and layouts? **Gone.**
+- Your 40-slide board deck that just needs one number updated? **Completely rebuilt from zero.**
+- The exact paragraph spacing and bullet hierarchy your MD approved? **Destroyed.**
+
+These tools are useless for professional environments where formatting compliance isn't optional.
+
+## The Magic
+
+**OpenDeck reads your existing PPTX, understands every shape on every slide, and only touches exactly what you ask it to change.** Everything else — every font, every color, every indent, every master slide relationship — stays untouched.
+
+Tell it *"update Q3 revenue to $4.2M and add an executive summary slide"* and it will:
+1. Find the exact text run containing the old revenue figure and replace just that run
+2. Clone an existing slide that uses the right layout from your master, preserving all designer formatting
+3. Fill the new slide with content that matches the density and style of your existing slides
+4. Validate that no placeholder text was left behind and no numbers were hallucinated
+
+**The result is indistinguishable from a human edit.** Your MD, your client, your design team — nobody can tell AI touched it. That's the point.
 
 ## Why This Is Different
 
-Every AI slide tool on the market today — Gamma, Beautiful.ai, Tome, SlidesAI — **regenerates your entire deck from scratch**. That means:
+**It's fast.** A two-pass architecture means the LLM generates a lightweight plan first (~3 seconds), you review and approve it, then content generation runs. A full deck modification takes 15-45 seconds — not the hours an analyst would spend.
 
-- Your designer's carefully chosen fonts, colors, and layouts? Gone.
-- Your company's branded template with custom master slides? Destroyed.
-- Your 40-slide board deck that just needs one number updated? Completely rebuilt from zero.
+**It's secure.** Run it with a local model (Qwen, LLaMA, DeepSeek via LM Studio) and **your data never leaves your machine.** No slides uploaded to third-party servers. No API calls to cloud providers. Your confidential board decks, M&A materials, and client deliverables stay on your hardware. **Zero data exposure.** This is the only AI slide tool that can run fully on-prem.
 
-**This engine does the opposite.** It reads your existing PPTX, understands every shape on every slide, and only touches exactly what you ask it to change. Everything else stays pixel-perfect.
-
-**It's faster.** A two-pass architecture means the LLM only generates a lightweight plan first (~3 seconds), then you approve before the heavier content generation runs. No wasted compute on bad ideas.
-
-**It's more secure.** Run it with a local model (Qwen, LLaMA, DeepSeek via LM Studio) and **your data never leaves your machine**. No slides uploaded to third-party servers. No API calls to cloud providers. Your confidential board decks, M&A materials, and client deliverables stay on your hardware. Zero data exposure.
-
-**It's architecturally sound.** The LLM never sees your PowerPoint file. It receives abstract JSON and returns abstract JSON. A deterministic executor translates those instructions into precise Aspose operations. The AI decides *what* to change; the code decides *how* — no hallucinated Python, no corrupted files.
+**It's architecturally bulletproof.** The LLM never sees your PowerPoint file. It receives abstract JSON and returns abstract JSON. A deterministic executor translates those instructions into precise operations. The AI decides *what* to change; the code decides *how* — no hallucinated Python, no corrupted files, no broken XML.
 
 ## What It Does
 
