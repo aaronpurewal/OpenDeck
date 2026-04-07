@@ -824,6 +824,275 @@ def update_chart(prs, slide_idx: int, shape_name: str, series: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Content — SHAPE GEOMETRY (move, swap, recolor decorations and overlays)
+# ---------------------------------------------------------------------------
+
+def move_shape(prs, slide_idx: int, shape_name: str,
+               x: float = None, y: float = None,
+               dx: float = None, dy: float = None) -> dict:
+    """
+    Move a shape on a slide. Absolute when x/y provided, relative when dx/dy.
+
+    Coordinates are in points (1/72 inch). Same units Aspose uses for
+    shape.x / shape.y. Returns dict with status.
+    """
+    if slide_idx < 0 or slide_idx >= len(prs.slides):
+        return {"status": "error",
+                "message": f"Slide index {slide_idx} out of range"}
+    slide = prs.slides[slide_idx]
+    shape = _find_shape(slide, shape_name)
+    if not shape:
+        return {"status": "error",
+                "message": f"Shape '{shape_name}' not found on slide {slide_idx}"}
+    try:
+        old_x, old_y = shape.x, shape.y
+    except Exception as e:
+        return {"status": "error",
+                "message": f"Could not read shape position: {str(e)}"}
+
+    new_x = x if x is not None else (old_x + dx if dx is not None else old_x)
+    new_y = y if y is not None else (old_y + dy if dy is not None else old_y)
+
+    try:
+        shape.x = new_x
+    except Exception:
+        pass
+    try:
+        shape.y = new_y
+    except Exception:
+        pass
+    return {"status": "ok", "slide_idx": slide_idx, "shape": shape_name,
+            "from": {"x": old_x, "y": old_y},
+            "to": {"x": new_x, "y": new_y}}
+
+
+def swap_shape_positions(prs, slide_idx: int,
+                         shape_name_a: str, shape_name_b: str) -> dict:
+    """
+    Atomically swap the (x, y) positions of two shapes on a slide.
+
+    Each shape keeps its own width and height; only the top-left point
+    is exchanged. This is the cleanest primitive for "these two icons
+    trade places" intent.
+    """
+    if slide_idx < 0 or slide_idx >= len(prs.slides):
+        return {"status": "error",
+                "message": f"Slide index {slide_idx} out of range"}
+    slide = prs.slides[slide_idx]
+    shape_a = _find_shape(slide, shape_name_a)
+    shape_b = _find_shape(slide, shape_name_b)
+    if not shape_a:
+        return {"status": "error",
+                "message": f"Shape '{shape_name_a}' not found on slide {slide_idx}"}
+    if not shape_b:
+        return {"status": "error",
+                "message": f"Shape '{shape_name_b}' not found on slide {slide_idx}"}
+    try:
+        ax, ay = shape_a.x, shape_a.y
+        bx, by = shape_b.x, shape_b.y
+    except Exception as e:
+        return {"status": "error",
+                "message": f"Could not read shape positions: {str(e)}"}
+
+    try:
+        shape_a.x, shape_a.y = bx, by
+    except Exception:
+        pass
+    try:
+        shape_b.x, shape_b.y = ax, ay
+    except Exception:
+        pass
+    return {"status": "ok", "slide_idx": slide_idx,
+            "swapped": [shape_name_a, shape_name_b]}
+
+
+def set_shape_fill(prs, slide_idx: int, shape_name: str,
+                   color_hex: str) -> dict:
+    """
+    Recolor a shape's solid fill (RAG status changes, severity flips).
+
+    color_hex is "#RRGGBB" or "RRGGBB". Returns dict with status.
+    """
+    if slide_idx < 0 or slide_idx >= len(prs.slides):
+        return {"status": "error",
+                "message": f"Slide index {slide_idx} out of range"}
+    slide = prs.slides[slide_idx]
+    shape = _find_shape(slide, shape_name)
+    if not shape:
+        return {"status": "error",
+                "message": f"Shape '{shape_name}' not found on slide {slide_idx}"}
+
+    hex_str = color_hex.lstrip("#")
+    if len(hex_str) != 6:
+        return {"status": "error",
+                "message": f"Invalid color_hex '{color_hex}', expected #RRGGBB"}
+    try:
+        r = int(hex_str[0:2], 16)
+        g = int(hex_str[2:4], 16)
+        b = int(hex_str[4:6], 16)
+    except ValueError:
+        return {"status": "error",
+                "message": f"Invalid hex digits in '{color_hex}'"}
+
+    try:
+        fill = shape.fill_format
+        fill.fill_type = slides.FillType.SOLID
+        if drawing is not None:
+            fill.solid_fill_color.color = drawing.Color.from_argb(255, r, g, b)
+        else:
+            return {"status": "error",
+                    "message": "drawing module not available for color setting"}
+        return {"status": "ok", "slide_idx": slide_idx, "shape": shape_name,
+                "color": f"#{hex_str.lower()}"}
+    except Exception as e:
+        return {"status": "error",
+                "message": f"Failed to set fill: {str(e)}"}
+
+
+def swap_table_rows(prs, slide_idx: int, shape_name: str,
+                    row_idx_a: int, row_idx_b: int) -> dict:
+    """
+    Atomic high-level row swap for tables with overlay shapes.
+
+    Swaps cell text content between row_idx_a and row_idx_b (per column),
+    AND moves any overlay shapes (icons, status dots, harvey balls, logos)
+    whose centers fall inside either row's vertical band so they follow
+    the content.
+
+    Cell formatting is preserved by editing portion text in place rather
+    than replacing the cells.
+    """
+    if slide_idx < 0 or slide_idx >= len(prs.slides):
+        return {"status": "error",
+                "message": f"Slide index {slide_idx} out of range"}
+    slide = prs.slides[slide_idx]
+    shape = _find_shape(slide, shape_name)
+    if not shape or not isinstance(shape, slides.Table):
+        return {"status": "error",
+                "message": f"Table '{shape_name}' not found on slide {slide_idx}"}
+
+    table = shape
+    n_rows = len(table.rows)
+    if row_idx_a < 0 or row_idx_a >= n_rows:
+        return {"status": "error",
+                "message": f"row_idx_a {row_idx_a} out of range (0..{n_rows - 1})"}
+    if row_idx_b < 0 or row_idx_b >= n_rows:
+        return {"status": "error",
+                "message": f"row_idx_b {row_idx_b} out of range (0..{n_rows - 1})"}
+    if row_idx_a == row_idx_b:
+        return {"status": "ok", "swapped_cells": 0, "moved_shapes": [],
+                "message": "row_idx_a equals row_idx_b, no-op"}
+
+    # --- Step 1: swap cell text per column ---
+    swapped_cells = 0
+    n_cols = len(table.columns)
+    for col_idx in range(n_cols):
+        try:
+            cell_a = table.rows[row_idx_a][col_idx]
+            cell_b = table.rows[row_idx_b][col_idx]
+            tf_a = _safe_text_frame(cell_a)
+            tf_b = _safe_text_frame(cell_b)
+            if not tf_a or not tf_b:
+                continue
+            text_a = ""
+            text_b = ""
+            try:
+                text_a = tf_a.text or ""
+            except Exception:
+                pass
+            try:
+                text_b = tf_b.text or ""
+            except Exception:
+                pass
+            # Write text_b into cell_a, text_a into cell_b
+            try:
+                tf_a.text = text_b
+            except Exception:
+                pass
+            try:
+                tf_b.text = text_a
+            except Exception:
+                pass
+            swapped_cells += 1
+        except Exception:
+            continue
+
+    # --- Step 2: compute y-bands for both rows ---
+    try:
+        table_y = shape.y
+    except Exception:
+        return {"status": "ok", "swapped_cells": swapped_cells,
+                "moved_shapes": [],
+                "message": "Could not read table y for overlay anchoring"}
+
+    y_cursor = table_y
+    row_y = {}  # row_idx -> (y, h)
+    try:
+        for r in range(n_rows):
+            h = table.rows[r].height
+            row_y[r] = (y_cursor, h)
+            y_cursor += h
+    except Exception:
+        return {"status": "ok", "swapped_cells": swapped_cells,
+                "moved_shapes": [],
+                "message": "Could not compute row bands for overlay anchoring"}
+
+    a_y, a_h = row_y[row_idx_a]
+    b_y, b_h = row_y[row_idx_b]
+
+    # --- Step 3: collect overlay shapes in either row's band, then apply ---
+    # IMPORTANT: collect first, then apply. Otherwise the second pass would
+    # re-detect already-moved shapes in their new positions.
+    try:
+        table_x = shape.x
+        table_w = shape.width
+    except Exception:
+        return {"status": "ok", "swapped_cells": swapped_cells,
+                "moved_shapes": []}
+
+    moves = []  # list of (shape_obj, new_x, new_y)
+    for s in slide.shapes:
+        if s is shape or isinstance(s, slides.Table):
+            continue
+        try:
+            sx, sy = s.x, s.y
+            sw, sh = s.width, s.height
+        except Exception:
+            continue
+        cx = sx + sw / 2
+        cy = sy + sh / 2
+        # Must overlap table horizontally (with small slack)
+        if cx < table_x - 36 or cx > table_x + table_w + 36:
+            continue
+        # Determine which row band the center falls in
+        if a_y <= cy <= a_y + a_h:
+            # Move from row A to row B
+            new_y = sy + (b_y - a_y)
+            moves.append((s, sx, new_y))
+        elif b_y <= cy <= b_y + b_h:
+            new_y = sy + (a_y - b_y)
+            moves.append((s, sx, new_y))
+
+    moved_names = []
+    for s, nx, ny in moves:
+        try:
+            s.x = nx
+        except Exception:
+            pass
+        try:
+            s.y = ny
+        except Exception:
+            pass
+        try:
+            moved_names.append(s.name)
+        except Exception:
+            pass
+
+    return {"status": "ok", "slide_idx": slide_idx, "shape": shape_name,
+            "swapped_cells": swapped_cells, "moved_shapes": moved_names}
+
+
+# ---------------------------------------------------------------------------
 # Content — CREATE (new charts and tables from scratch)
 # ---------------------------------------------------------------------------
 

@@ -12,7 +12,8 @@ from tools import (
     clone_slide, delete_slides, reorder_slides, duplicate_slide,
     fill_placeholder, fill_table, edit_run, edit_paragraph,
     edit_table_cell, edit_table_run, update_chart,
-    create_chart, create_table
+    create_chart, create_table,
+    move_shape, swap_shape_positions, set_shape_fill, swap_table_rows
 )
 
 STRUCTURAL_DISPATCH = {
@@ -35,6 +36,11 @@ CONTENT_DISPATCH = {
     "edit_table_cell": edit_table_cell,
     "edit_table_run": edit_table_run,
     "update_chart": update_chart,
+    # GEOMETRY: move/swap/recolor shapes and overlay-aware row swap
+    "move_shape": move_shape,
+    "swap_shape_positions": swap_shape_positions,
+    "set_shape_fill": set_shape_fill,
+    "swap_table_rows": swap_table_rows,
 }
 
 

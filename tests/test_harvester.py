@@ -96,3 +96,87 @@ class TestHarvestDeck:
         state = harvest_deck(prs)
         for i, label in enumerate(state["label_list"]):
             assert label == f"slide_{i}"
+
+
+class TestOverlayDetection:
+    """Verify decorations are anchored to table rows during harvest."""
+
+    def test_oval_overlaying_table_row_gets_anchored(self):
+        prs = slides.Presentation()
+        layout = prs.masters[0].layout_slides[0]
+        prs.slides.insert_empty_slide(len(prs.slides), layout)
+        slide_idx = len(prs.slides) - 1
+        slide = prs.slides[slide_idx]
+
+        # Build a 4-row table at (100, 100), each row 50pt tall, 3 cols of 100pt
+        col_widths = [100.0, 100.0, 100.0]
+        row_heights = [50.0, 50.0, 50.0, 50.0]
+        table = slide.shapes.add_table(100.0, 100.0, col_widths, row_heights)
+        table.name = "RisksTable"
+
+        # Place an oval overlaying row 2 (y=200..250) in the rightmost column area
+        # Center the oval at y = 225 (middle of row 2)
+        oval = slide.shapes.add_auto_shape(
+            slides.ShapeType.ELLIPSE,
+            350.0,  # x within table x-range (100..400)
+            215.0,  # y center at 225
+            20.0, 20.0
+        )
+        oval.name = "Risk Dot 2"
+
+        state = harvest_deck(prs)
+        slide_state = state["slides"][slide_idx]
+
+        # Find the oval in the harvested shapes
+        oval_state = None
+        for s in slide_state["shapes"]:
+            if s.get("name") == "Risk Dot 2":
+                oval_state = s
+                break
+
+        assert oval_state is not None, "Oval should be present in harvested state"
+        assert oval_state["type"] == "decoration"
+        assert "anchor" in oval_state
+        assert oval_state["anchor"]["kind"] == "table_row"
+        assert oval_state["anchor"]["shape"] == "RisksTable"
+        assert oval_state["anchor"]["row_idx"] == 2
+
+        # The table should have row_overlays referencing the oval
+        table_state = None
+        for s in slide_state["shapes"]:
+            if s.get("name") == "RisksTable":
+                table_state = s
+                break
+        assert table_state is not None
+        assert "row_overlays" in table_state
+        # row_overlays keys are stringified ints
+        assert "2" in table_state["row_overlays"]
+        assert "Risk Dot 2" in table_state["row_overlays"]["2"]
+
+    def test_oval_outside_table_not_anchored(self):
+        prs = slides.Presentation()
+        layout = prs.masters[0].layout_slides[0]
+        prs.slides.insert_empty_slide(len(prs.slides), layout)
+        slide_idx = len(prs.slides) - 1
+        slide = prs.slides[slide_idx]
+
+        # Table at (100, 100), 200pt tall total
+        col_widths = [100.0, 100.0]
+        row_heights = [50.0, 50.0]
+        table = slide.shapes.add_table(100.0, 100.0, col_widths, row_heights)
+        table.name = "SmallTable"
+
+        # Oval far below the table
+        oval = slide.shapes.add_auto_shape(
+            slides.ShapeType.ELLIPSE, 150.0, 500.0, 20.0, 20.0
+        )
+        oval.name = "Orphan"
+
+        state = harvest_deck(prs)
+        slide_state = state["slides"][slide_idx]
+
+        for s in slide_state["shapes"]:
+            if s.get("name") == "Orphan":
+                # Orphan should NOT have an anchor
+                assert "anchor" not in s
+                break

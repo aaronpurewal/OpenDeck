@@ -37,6 +37,25 @@ CHART AND TABLE CREATION:
   Allowed position values: "center", "left_half", "right_half", "bottom_half".
 - "create_table": creates a new table. Same position values as charts.
 
+OVERLAY SHAPES (icons, status circles, harvey balls, logos, arrows):
+Tables and text shapes in the document state may include "row_overlays" / \
+"para_overlays" listing decoration shapes anchored to specific rows or bullets. \
+Decoration shapes themselves carry an "anchor" field showing what they belong to. \
+When the user asks to swap, reorder, or move rows/sections that have overlays, \
+you MUST also plan an action that moves the overlay shapes -- otherwise risk \
+dots, RAG badges, logos, etc. will be left behind.
+
+- Prefer "swap_table_rows" whenever the intent is "swap row N with row M": it \
+  atomically swaps cell text AND moves any overlay shapes anchored to those \
+  rows. Args: shape_name (the table), row_idx_a, row_idx_b.
+- Use "set_shape_fill" to change a status badge's color (RAG transitions, \
+  risk severity flips). Args: shape_name, color_hex (e.g. "#C00000" for red).
+- Use "swap_shape_positions" to atomically swap two shapes' (x, y). Args: \
+  shape_name_a, shape_name_b.
+- Use "move_shape" for free repositioning. Args: shape_name, x/y (absolute) \
+  or dx/dy (relative). Coordinates are in points (1/72 inch).
+- NEVER just "edit_table_cell" and ignore anchored overlays.
+
 CHOOSING THE RIGHT LAYOUT:
 Each layout in "master_layouts" includes a "used_by" field listing which \
 existing slides use that layout. Use this to pick the best layout for new \
@@ -135,6 +154,28 @@ YOUR OUTPUT must be a single JSON object:
       "slide_label": "new_summary_1",
       "position": "bottom_half",
       "instruction": "Summary KPI table with Revenue, EBITDA, Margin"
+    }},
+    {{
+      "action": "swap_table_rows",
+      "slide_label": "slide_4",
+      "shape_name": "Risks Table",
+      "row_idx_a": 3,
+      "row_idx_b": 4,
+      "instruction": "Swap risk #3 and risk #4 including their severity dot overlays"
+    }},
+    {{
+      "action": "set_shape_fill",
+      "slide_label": "slide_7",
+      "shape_name": "Project Phoenix RAG",
+      "color_hex": "#C00000",
+      "instruction": "Change Project Phoenix status from amber to red"
+    }},
+    {{
+      "action": "swap_shape_positions",
+      "slide_label": "slide_5",
+      "shape_name_a": "Oval 3",
+      "shape_name_b": "Oval 4",
+      "instruction": "Swap two icons that are not anchored to a table row"
     }}
   ]
 }}
@@ -258,9 +299,45 @@ corresponds to an item in the manifest, with the actual text/data added:
       "headers": ["Metric", "Q2", "Q3", "Delta"],
       "rows": [["Revenue", "13.1", "14.8", "+13%"], ["EBITDA", "3.4", "4.0", "+18%"]],
       "position": "bottom_half"
+    }},
+    {{
+      "action": "swap_table_rows",
+      "slide_label": "slide_4",
+      "shape_name": "Risks Table",
+      "row_idx_a": 3,
+      "row_idx_b": 4
+    }},
+    {{
+      "action": "set_shape_fill",
+      "slide_label": "slide_7",
+      "shape_name": "Project Phoenix RAG",
+      "color_hex": "#C00000"
+    }},
+    {{
+      "action": "swap_shape_positions",
+      "slide_label": "slide_5",
+      "shape_name_a": "Oval 3",
+      "shape_name_b": "Oval 4"
+    }},
+    {{
+      "action": "move_shape",
+      "slide_label": "slide_5",
+      "shape_name": "Callout 1",
+      "x": 320.0,
+      "y": 180.0
     }}
   ]
 }}
+
+OVERLAY SHAPES:
+The document state may show "row_overlays" on tables or "para_overlays" on \
+text shapes. Each entry maps a row/paragraph index to a list of decoration \
+shape names (icons, RAG dots, harvey balls, logos) that visually sit on top \
+of that row/bullet. Decoration shapes themselves carry an "anchor" field. \
+When you swap or reorder rows that have overlays, ALWAYS use swap_table_rows \
+(it handles the overlay movement atomically). When you change a status, use \
+set_shape_fill on the badge. NEVER just edit_table_cell and ignore the \
+anchored overlays.
 
 RULES:
 1. Never hallucinate content. All text must be derived ONLY from data \

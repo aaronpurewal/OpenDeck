@@ -189,6 +189,47 @@ def extract_shape(shape) -> dict | None:
                 para_info["runs"].append(run_info)
             base["paragraphs"].append(para_info)
 
+        # Reclassify empty-text autoshapes as decorations.
+        # An ellipse, arrow, or callout with no text content is a
+        # decoration (RAG dot, severity icon, etc.), not a text shape.
+        # Rectangle/text-box autoshapes with empty text are kept as
+        # text since they're typically empty content placeholders.
+        if not (base["text"] or "").strip():
+            try:
+                st_name = ""
+                st_val = None
+                if hasattr(shape, "shape_type"):
+                    st_val = shape.shape_type
+                    try:
+                        st_name = str(st_val.name) if hasattr(st_val, "name") else str(st_val)
+                    except Exception:
+                        st_name = str(st_val)
+                # Shape types that are text containers (stay as "text"):
+                _TEXT_CONTAINER_NAMES = {
+                    "RECTANGLE", "ROUND_CORNER_RECTANGLE",
+                    "TEXT_BOX", "ONE_ROUND_CORNER_RECTANGLE",
+                    "TWO_ROUND_CORNER_RECTANGLE",
+                    "SNIP_ROUND_RECTANGLE", "TWO_SAMESIDE_ROUND_CORNER_RECTANGLE",
+                    "TWO_DIAG_ROUND_CORNER_RECTANGLE",
+                }
+                if st_name and st_name.upper() not in _TEXT_CONTAINER_NAMES:
+                    # This is a decorative shape with no text content
+                    base["type"] = "decoration"
+                    base["subtype"] = type(shape).__name__
+                    base["auto_shape_type"] = st_name
+                    try:
+                        fill = shape.fill_format
+                        if fill is not None and fill.fill_type == slides.FillType.SOLID:
+                            c = fill.solid_fill_color.color
+                            base["fill_hex"] = f"#{c.r:02x}{c.g:02x}{c.b:02x}"
+                    except BaseException:
+                        pass
+                    base.pop("paragraphs", None)
+                    base.pop("text", None)
+                    return base
+            except Exception:
+                pass
+
         base["char_limit"] = estimate_char_limit(
             shape.width, shape.height, font_size_pt=max_font_size
         )
@@ -226,6 +267,19 @@ def extract_shape(shape) -> dict | None:
                     row_data.append(cell_info)
                 base["rows"].append(row_data)
 
+            # Compute per-row absolute y-bands for overlay anchoring.
+            # Aspose exposes row.height but not row.y, so we compute it
+            # cumulatively from table.y.
+            base["row_bounds"] = []
+            try:
+                y_cursor = shape.y
+                for row_idx in range(len(table.rows)):
+                    h = table.rows[row_idx].height
+                    base["row_bounds"].append({"y": y_cursor, "h": h})
+                    y_cursor += h
+            except Exception:
+                pass
+
             if len(table.rows) > 0 and len(table.columns) > 0:
                 base["cell_char_limit"] = estimate_char_limit(
                     table.columns[0].width, table.rows[0].height
@@ -239,6 +293,22 @@ def extract_shape(shape) -> dict | None:
             base["col_count"] = 0
             base["rows"] = []
             base["cell_char_limit"] = 50
+            return base
+
+    # --- Group shapes (designer-grouped icon+caption etc.) ---
+    if isinstance(shape, slides.GroupShape):
+        try:
+            base["type"] = "group"
+            base["children"] = []
+            for child in shape.shapes:
+                try:
+                    base["children"].append(child.name)
+                except Exception:
+                    pass
+            return base
+        except Exception:
+            base["type"] = "group"
+            base["children"] = []
             return base
 
     # --- Chart shapes ---
@@ -276,7 +346,152 @@ def extract_shape(shape) -> dict | None:
             base["categories"] = []
             return base
 
-    return None
+    # --- Decoration fall-through (auto shapes, picture frames, ovals,
+    #     RAG dots, harvey balls, logos, callouts, freeform shapes) ---
+    try:
+        base["type"] = "decoration"
+        try:
+            base["subtype"] = type(shape).__name__
+        except Exception:
+            base["subtype"] = "unknown"
+        try:
+            if hasattr(shape, "auto_shape_type"):
+                base["auto_shape_type"] = str(shape.auto_shape_type)
+        except Exception:
+            pass
+        # Solid fill color (RAG status badges, severity dots, etc.)
+        try:
+            fill = shape.fill_format
+            if fill is not None and fill.fill_type == slides.FillType.SOLID:
+                c = fill.solid_fill_color.color
+                base["fill_hex"] = f"#{c.r:02x}{c.g:02x}{c.b:02x}"
+        except BaseException:
+            pass
+        return base
+    except Exception:
+        return None
+
+
+def _walk_slide_shapes(slide_shapes, parent_group: str = None) -> list:
+    """
+    Walk a slide's shape tree and yield extracted shape dicts.
+
+    Recurses into GroupShape children, recording the parent group's name on
+    each child so the LLM can decide whether to move the group as one unit
+    or address children individually.
+    """
+    out = []
+    for shape in slide_shapes:
+        extracted = extract_shape(shape)
+        if extracted:
+            if parent_group:
+                extracted["parent_group"] = parent_group
+            out.append(extracted)
+        # Recurse into group children
+        if isinstance(shape, slides.GroupShape):
+            try:
+                group_name = shape.name
+                out.extend(_walk_slide_shapes(shape.shapes, parent_group=group_name))
+            except Exception:
+                pass
+    return out
+
+
+def _associate_overlays(slide_shapes: list, slide_w: float = None,
+                        slide_h: float = None) -> None:
+    """
+    Anchor decoration shapes to table rows or text bullet paragraphs.
+
+    Mutates slide_shapes in place. After this runs:
+    - Each decoration that overlays a table row gets `anchor` =
+      {"kind": "table_row", "shape": <table_name>, "row_idx": N}
+    - Each decoration that overlays a text bullet gets `anchor` =
+      {"kind": "text_paragraph", "shape": <text_name>, "para_idx": N}
+    - Each table with overlays gets `row_overlays` = {row_idx: [names]}
+    - Each text shape with overlays gets `para_overlays` = {para_idx: [names]}
+
+    Background candidates (shapes spanning >60% of slide dims) are skipped
+    to avoid anchoring section dividers, full-bleed rectangles, or chrome.
+    """
+    tables = [s for s in slide_shapes if s.get("type") == "table"]
+    texts = [s for s in slide_shapes if s.get("type") == "text"]
+    decorations = [s for s in slide_shapes if s.get("type") == "decoration"]
+
+    for deco in decorations:
+        bounds = deco.get("bounds", {})
+        dx, dy = bounds.get("x", 0), bounds.get("y", 0)
+        dw, dh = bounds.get("w", 0), bounds.get("h", 0)
+        if dw <= 0 or dh <= 0:
+            continue
+
+        # Skip background candidates (full-bleed shapes)
+        if slide_w and slide_h:
+            if dw > 0.6 * slide_w or dh > 0.6 * slide_h:
+                continue
+
+        cx, cy = dx + dw / 2, dy + dh / 2
+
+        # First try table row anchoring
+        anchored = False
+        for table in tables:
+            tb = table.get("bounds", {})
+            tx, ty = tb.get("x", 0), tb.get("y", 0)
+            tw, th = tb.get("w", 0), tb.get("h", 0)
+            if tw <= 0 or th <= 0:
+                continue
+            # Center must be inside the table's bbox (with small horizontal slack)
+            if not (tx - 0.5 * 72 <= cx <= tx + tw + 0.5 * 72):
+                continue
+            if not (ty <= cy <= ty + th):
+                continue
+            row_bounds = table.get("row_bounds", [])
+            for row_idx, rb in enumerate(row_bounds):
+                if rb["y"] <= cy <= rb["y"] + rb["h"]:
+                    deco["anchor"] = {
+                        "kind": "table_row",
+                        "shape": table["name"],
+                        "row_idx": row_idx,
+                    }
+                    table.setdefault("row_overlays", {}).setdefault(
+                        str(row_idx), []
+                    ).append(deco["name"])
+                    anchored = True
+                    break
+            if anchored:
+                break
+
+        if anchored:
+            continue
+
+        # Fall back to text paragraph anchoring
+        for text in texts:
+            tb = text.get("bounds", {})
+            tx, ty = tb.get("x", 0), tb.get("y", 0)
+            tw, th = tb.get("w", 0), tb.get("h", 0)
+            if tw <= 0 or th <= 0:
+                continue
+            # Decoration must be horizontally near (within ~1") and
+            # vertically intersect the text shape's bbox
+            if cx < tx - 72 or cx > tx + tw + 72:
+                continue
+            if cy < ty or cy > ty + th:
+                continue
+            paragraphs = text.get("paragraphs", [])
+            if not paragraphs:
+                continue
+            # Best-effort paragraph anchoring by vertical offset
+            para_h = th / max(len(paragraphs), 1)
+            offset = cy - ty
+            para_idx = min(int(offset / para_h), len(paragraphs) - 1)
+            deco["anchor"] = {
+                "kind": "text_paragraph",
+                "shape": text["name"],
+                "para_idx": para_idx,
+            }
+            text.setdefault("para_overlays", {}).setdefault(
+                str(para_idx), []
+            ).append(deco["name"])
+            break
 
 
 def harvest_deck(prs: slides.Presentation) -> dict:
@@ -351,6 +566,13 @@ def harvest_deck(prs: slides.Presentation) -> dict:
     for layout_info in state["master_layouts"]:
         layout_info["used_by"] = layout_usage.get(layout_info["name"], [])
 
+    # Get slide dimensions for background-shape detection
+    try:
+        slide_w = prs.slide_size.size.width
+        slide_h = prs.slide_size.size.height
+    except Exception:
+        slide_w, slide_h = None, None
+
     # Walk slides — each gets a stable label
     for i in range(len(prs.slides)):
         slide = prs.slides[i]
@@ -368,10 +590,10 @@ def harvest_deck(prs: slides.Presentation) -> dict:
             "shapes": []
         }
         state["label_list"].append(label)
-        for shape in slide.shapes:
-            shape_state = extract_shape(shape)
-            if shape_state:
-                slide_state["shapes"].append(shape_state)
+        # Walk shapes recursively (handles GroupShape children)
+        slide_state["shapes"] = _walk_slide_shapes(slide.shapes)
+        # Anchor decorations to tables/text after extraction
+        _associate_overlays(slide_state["shapes"], slide_w, slide_h)
         state["slides"].append(slide_state)
 
     return state
@@ -438,6 +660,10 @@ def compact_state(state: dict, max_text_chars: int = 500) -> dict:
                         runs_summary.append({"p": pi, "runs": run_texts})
                 if runs_summary:
                     compact_shape["paragraphs"] = runs_summary
+                if shape.get("para_overlays"):
+                    compact_shape["para_overlays"] = shape["para_overlays"]
+                if shape.get("parent_group"):
+                    compact_shape["parent_group"] = shape["parent_group"]
                 cs["shapes"].append(compact_shape)
 
             elif s_type == "table":
@@ -461,6 +687,8 @@ def compact_state(state: dict, max_text_chars: int = 500) -> dict:
                     compact_shape["rows"] = compact_rows
                 if len(rows) > 8:
                     compact_shape["total_rows"] = len(rows)
+                if shape.get("row_overlays"):
+                    compact_shape["row_overlays"] = shape["row_overlays"]
                 cs["shapes"].append(compact_shape)
 
             elif s_type == "chart":
@@ -470,6 +698,31 @@ def compact_state(state: dict, max_text_chars: int = 500) -> dict:
                     "chart_type": shape.get("chart_type", "unknown"),
                     "series": shape.get("series", []),
                     "categories": shape.get("categories", []),
+                }
+                cs["shapes"].append(compact_shape)
+
+            elif s_type == "decoration":
+                compact_shape = {
+                    "name": shape["name"],
+                    "type": "decoration",
+                }
+                if shape.get("subtype"):
+                    compact_shape["subtype"] = shape["subtype"]
+                if shape.get("auto_shape_type"):
+                    compact_shape["auto_shape_type"] = shape["auto_shape_type"]
+                if shape.get("fill_hex"):
+                    compact_shape["fill_hex"] = shape["fill_hex"]
+                if shape.get("anchor"):
+                    compact_shape["anchor"] = shape["anchor"]
+                if shape.get("parent_group"):
+                    compact_shape["parent_group"] = shape["parent_group"]
+                cs["shapes"].append(compact_shape)
+
+            elif s_type == "group":
+                compact_shape = {
+                    "name": shape["name"],
+                    "type": "group",
+                    "children": shape.get("children", []),
                 }
                 cs["shapes"].append(compact_shape)
 
