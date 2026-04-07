@@ -43,6 +43,18 @@ h1, h2, h3, h4, h5, h6 {
     letter-spacing: -0.03em;
 }
 
+/* Hide Streamlit default header/toolbar */
+[data-testid="stHeader"] {
+    display: none !important;
+}
+[data-testid="stToolbar"] {
+    display: none !important;
+}
+header[data-testid="stHeader"] {
+    background: transparent !important;
+    height: 0 !important;
+}
+
 /* Remove default top padding */
 .block-container {
     padding-top: 1rem !important;
