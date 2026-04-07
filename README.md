@@ -272,9 +272,9 @@ Contributions are welcome!
 
 This project is licensed under the Business Source License 1.1 (BSL). You may freely use it for non-production, personal, educational, and evaluation purposes.
 
-**For production or commercial use**, please contact:
+**For production or commercial use or implementation**, please contact:
 
-**Aaron Purewal** ([GitHub](https://github.com/aaronpurewal))
+**Aaron Purewal** (aaron.purewal@gmail.com)
 
 On April 5, 2029, this software will automatically convert to the Apache License 2.0.
 
