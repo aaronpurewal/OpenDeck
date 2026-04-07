@@ -36,7 +36,8 @@ _CONTENT_ACTIONS = [
     "fill_placeholder", "fill_table", "edit_run", "edit_paragraph",
     "edit_table_cell", "edit_table_run", "update_chart",
     "create_chart", "create_table",
-    "move_shape", "swap_shape_positions", "set_shape_fill", "swap_table_rows"
+    "move_shape", "swap_shape_positions", "set_shape_fill", "swap_table_rows",
+    "swap_table_sections"
 ]
 
 # Pass 1: structural plan + content manifest
@@ -109,7 +110,11 @@ PLAN_SCHEMA = {
                     "x": {"type": "number"},
                     "y": {"type": "number"},
                     "dx": {"type": "number"},
-                    "dy": {"type": "number"}
+                    "dy": {"type": "number"},
+                    "slide_label_a": {"type": "string"},
+                    "slide_label_b": {"type": "string"},
+                    "section_idx_a": {"type": "integer"},
+                    "section_idx_b": {"type": "integer"}
                 },
                 "required": ["action", "slide_label"]
             }
@@ -179,7 +184,11 @@ CONTENT_SCHEMA = {
                     "shape_name_b": {"type": "string"},
                     "row_idx_a": {"type": "integer"},
                     "row_idx_b": {"type": "integer"},
-                    "color_hex": {"type": "string"}
+                    "color_hex": {"type": "string"},
+                    "slide_label_a": {"type": "string"},
+                    "slide_label_b": {"type": "string"},
+                    "section_idx_a": {"type": "integer"},
+                    "section_idx_b": {"type": "integer"}
                 },
                 "required": ["action", "slide_label"]
             }

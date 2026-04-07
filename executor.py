@@ -13,7 +13,8 @@ from tools import (
     fill_placeholder, fill_table, edit_run, edit_paragraph,
     edit_table_cell, edit_table_run, update_chart,
     create_chart, create_table,
-    move_shape, swap_shape_positions, set_shape_fill, swap_table_rows
+    move_shape, swap_shape_positions, set_shape_fill, swap_table_rows,
+    swap_table_sections
 )
 
 STRUCTURAL_DISPATCH = {
@@ -41,6 +42,8 @@ CONTENT_DISPATCH = {
     "swap_shape_positions": swap_shape_positions,
     "set_shape_fill": set_shape_fill,
     "swap_table_rows": swap_table_rows,
+    # SECTIONS: cross-slide, cross-table, multi-row section swap
+    "swap_table_sections": swap_table_sections,
 }
 
 
@@ -168,6 +171,34 @@ def execute_plan(plan: dict, prs, label_list: list) -> dict:
             log.append({"action": action, "status": "error",
                        "message": f"Unknown content action: {action}"})
             continue
+
+        # --- Cross-slide actions: resolve slide_label_a / slide_label_b ---
+        if action == "swap_table_sections":
+            try:
+                label_a = step.get("slide_label_a") or step.get("slide_label")
+                label_b = step.get("slide_label_b")
+                idx_a = resolve(label_a)
+                idx_b = resolve(label_b)
+                if idx_a is None or idx_b is None:
+                    log.append({"action": action, "status": "error",
+                               "message": f"Unknown slide labels: {label_a}, {label_b}"})
+                    continue
+                skip_cross = {"action", "reasoning", "instruction",
+                             "slide_label", "slide_label_a", "slide_label_b",
+                             "shape_name", "char_limit", "columns"}
+                cross_args = {k: v for k, v in step.items() if k not in skip_cross}
+                cross_args["slide_idx_a"] = idx_a
+                cross_args["slide_idx_b"] = idx_b
+                result = fn(prs, **cross_args)
+                log.append({"action": action,
+                           "status": result.get("status", "ok"),
+                           "message": result.get("message", "")})
+            except Exception as e:
+                tb = traceback.format_exc()
+                log.append({"action": action, "status": "error",
+                           "message": str(e), "traceback": tb, "step": step})
+            continue
+
         try:
             # Resolve slide label to current index
             slide_label = step.get("slide_label")

@@ -56,6 +56,36 @@ dots, RAG badges, logos, etc. will be left behind.
   or dx/dy (relative). Coordinates are in points (1/72 inch).
 - NEVER just "edit_table_cell" and ignore anchored overlays.
 
+TABLE SECTIONS (numbered items in consulting tables):
+Some tables group rows into logical sections. For example, a "Key Risks" \
+table typically has 2+ rows per risk: a header row (title + mitigants + \
+probability/impact dots) followed by a merged row spanning all columns \
+with bullet details. The document state exposes these as "sections" on \
+each table:
+
+  "sections": [
+    {{"idx": 0, "header_row": 1, "bullet_rows": [2], "title_preview": "(1) ..."}},
+    {{"idx": 1, "header_row": 3, "bullet_rows": [4], "title_preview": "(2) ..."}}
+  ]
+
+When the user asks to swap, reorder, or move a numbered item that maps to \
+a section (e.g. "swap risk #1 with risk #5"), use "swap_table_sections". \
+It is the ONLY action that handles:
+  - multi-row sections atomically (header + bullet rows together)
+  - cross-slide / cross-table swaps (sections in different tables on \
+    different slides)
+  - multi-paragraph cells (preserves bold titles AND body/mitigants lines)
+  - overlay shape movement, including across slides
+
+Args: slide_label_a, shape_name_a, section_idx_a, slide_label_b, \
+shape_name_b, section_idx_b. Also set slide_label=slide_label_a for \
+schema compatibility.
+
+CRITICAL: risks #1 and #5 may live in DIFFERENT tables on DIFFERENT \
+slides. Always check the sections across all tables to find where each \
+numbered item lives. Prefer swap_table_sections over swap_table_rows or \
+edit_table_cell whenever the user intent is a section-level swap.
+
 CHOOSING THE RIGHT LAYOUT:
 Each layout in "master_layouts" includes a "used_by" field listing which \
 existing slides use that layout. Use this to pick the best layout for new \
@@ -162,6 +192,17 @@ YOUR OUTPUT must be a single JSON object:
       "row_idx_a": 3,
       "row_idx_b": 4,
       "instruction": "Swap risk #3 and risk #4 including their severity dot overlays"
+    }},
+    {{
+      "action": "swap_table_sections",
+      "slide_label": "slide_4",
+      "slide_label_a": "slide_4",
+      "shape_name_a": "object 2",
+      "section_idx_a": 0,
+      "slide_label_b": "slide_5",
+      "shape_name_b": "object 2",
+      "section_idx_b": 2,
+      "instruction": "Swap risk #1 (slide_4 section 0) with risk #5 (slide_5 section 2), including bullet rows and dot overlays"
     }},
     {{
       "action": "set_shape_fill",
@@ -308,6 +349,16 @@ corresponds to an item in the manifest, with the actual text/data added:
       "row_idx_b": 4
     }},
     {{
+      "action": "swap_table_sections",
+      "slide_label": "slide_4",
+      "slide_label_a": "slide_4",
+      "shape_name_a": "object 2",
+      "section_idx_a": 0,
+      "slide_label_b": "slide_5",
+      "shape_name_b": "object 2",
+      "section_idx_b": 2
+    }},
+    {{
       "action": "set_shape_fill",
       "slide_label": "slide_7",
       "shape_name": "Project Phoenix RAG",
@@ -329,15 +380,25 @@ corresponds to an item in the manifest, with the actual text/data added:
   ]
 }}
 
-OVERLAY SHAPES:
+OVERLAY SHAPES AND TABLE SECTIONS:
 The document state may show "row_overlays" on tables or "para_overlays" on \
 text shapes. Each entry maps a row/paragraph index to a list of decoration \
 shape names (icons, RAG dots, harvey balls, logos) that visually sit on top \
 of that row/bullet. Decoration shapes themselves carry an "anchor" field. \
-When you swap or reorder rows that have overlays, ALWAYS use swap_table_rows \
-(it handles the overlay movement atomically). When you change a status, use \
-set_shape_fill on the badge. NEVER just edit_table_cell and ignore the \
-anchored overlays.
+Tables may also expose "sections" — logical groupings of rows (numbered \
+item header + bullet rows).
+
+Action selection hierarchy:
+- swap_table_sections: for swapping numbered items that map to sections \
+  (e.g. "swap risk #1 with risk #5"). Handles cross-table, cross-slide, \
+  multi-row, and multi-paragraph cells. THIS is the right action when the \
+  numbered items live in different tables on different slides.
+- swap_table_rows: for single-row swaps within a single table.
+- set_shape_fill: for status changes (RAG color flips).
+- edit_table_cell: for single-value cell edits ONLY when no sections/overlays \
+  are involved.
+
+NEVER just edit_table_cell and ignore anchored overlays or section pairing.
 
 RULES:
 1. Never hallucinate content. All text must be derived ONLY from data \

@@ -182,6 +182,201 @@ def _safe_font_height(pf):
     return 0
 
 
+def _read_cell_structure(cell) -> list:
+    """
+    Snapshot a cell's text content as a list of paragraph dicts.
+
+    Each paragraph contains a list of portion dicts capturing text and
+    formatting. Used by swap_table_sections to preserve multi-paragraph
+    structure (e.g. bold title + regular mitigants line) when moving
+    content between cells.
+
+    Returns:
+        [{"portions": [{"text": str, "bold": bool|None, "italic": bool|None,
+                        "font_height": float|None, "font_name": str|None,
+                        "fill_hex": str|None}, ...]}, ...]
+    """
+    out = []
+    tf = _safe_text_frame(cell)
+    if tf is None:
+        return out
+    try:
+        paragraphs = tf.paragraphs
+    except Exception:
+        return out
+    for para in paragraphs:
+        para_dict = {"portions": []}
+        try:
+            portions = para.portions
+        except Exception:
+            out.append(para_dict)
+            continue
+        for portion in portions:
+            p_dict = {"text": ""}
+            try:
+                p_dict["text"] = portion.text or ""
+            except Exception:
+                pass
+            try:
+                pf = portion.portion_format
+            except Exception:
+                para_dict["portions"].append(p_dict)
+                continue
+            try:
+                val = pf.font_bold
+                if val == slides.NullableBool.TRUE:
+                    p_dict["bold"] = True
+                elif val == slides.NullableBool.FALSE:
+                    p_dict["bold"] = False
+            except Exception:
+                pass
+            try:
+                val = pf.font_italic
+                if val == slides.NullableBool.TRUE:
+                    p_dict["italic"] = True
+                elif val == slides.NullableBool.FALSE:
+                    p_dict["italic"] = False
+            except Exception:
+                pass
+            try:
+                fh = pf.font_height
+                if fh is not None and not math.isnan(fh):
+                    p_dict["font_height"] = fh
+            except Exception:
+                pass
+            try:
+                lf = pf.latin_font
+                if lf is not None:
+                    p_dict["font_name"] = str(lf)
+            except Exception:
+                pass
+            try:
+                fill = pf.fill_format
+                if fill is not None and fill.fill_type == slides.FillType.SOLID:
+                    c = fill.solid_fill_color.color
+                    p_dict["fill_hex"] = f"#{c.r:02x}{c.g:02x}{c.b:02x}"
+            except BaseException:
+                pass
+            para_dict["portions"].append(p_dict)
+        out.append(para_dict)
+    return out
+
+
+def _write_cell_preserving_structure(cell, paragraphs: list) -> None:
+    """
+    Write paragraph snapshots back into a cell, preserving/recreating
+    paragraph and portion counts and formatting.
+
+    Reuses existing paragraphs/portions where possible (fill_placeholder
+    pattern) to preserve theme inheritance. Adds new ones via
+    slides.Paragraph() / slides.Portion() when target has more; blanks
+    extras when target has fewer.
+
+    Per-property writes use individual try/except blocks so one failing
+    property doesn't skip the others.
+    """
+    tf = _safe_text_frame(cell)
+    if tf is None:
+        return
+    try:
+        existing_paras = tf.paragraphs
+    except Exception:
+        return
+
+    target_n = len(paragraphs)
+    existing_n = existing_paras.count
+
+    # Grow if needed
+    while existing_paras.count < target_n:
+        try:
+            new_para = slides.Paragraph()
+            existing_paras.add(new_para)
+        except Exception:
+            break
+    # Blank extras (don't remove — Aspose's remove_at can be flaky on cells)
+    for extra_i in range(target_n, existing_paras.count):
+        try:
+            extra_para = existing_paras[extra_i]
+            for extra_portion in extra_para.portions:
+                try:
+                    extra_portion.text = ""
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    for pi in range(target_n):
+        try:
+            para = existing_paras[pi]
+        except Exception:
+            continue
+        target_portions = paragraphs[pi].get("portions", [])
+        try:
+            existing_portions = para.portions
+        except Exception:
+            continue
+        # Grow if needed
+        while existing_portions.count < len(target_portions):
+            try:
+                new_portion = slides.Portion()
+                existing_portions.add(new_portion)
+            except Exception:
+                break
+        # Blank extras
+        for extra_i in range(len(target_portions), existing_portions.count):
+            try:
+                existing_portions[extra_i].text = ""
+            except Exception:
+                pass
+
+        for porti, p_dict in enumerate(target_portions):
+            try:
+                portion = existing_portions[porti]
+            except Exception:
+                continue
+            try:
+                portion.text = p_dict.get("text", "")
+            except Exception:
+                pass
+            try:
+                pf = portion.portion_format
+            except Exception:
+                continue
+            if "bold" in p_dict:
+                try:
+                    pf.font_bold = (slides.NullableBool.TRUE if p_dict["bold"]
+                                    else slides.NullableBool.FALSE)
+                except Exception:
+                    pass
+            if "italic" in p_dict:
+                try:
+                    pf.font_italic = (slides.NullableBool.TRUE if p_dict["italic"]
+                                      else slides.NullableBool.FALSE)
+                except Exception:
+                    pass
+            if "font_height" in p_dict:
+                try:
+                    pf.font_height = p_dict["font_height"]
+                except Exception:
+                    pass
+            if "font_name" in p_dict:
+                try:
+                    pf.latin_font = slides.FontData(p_dict["font_name"])
+                except Exception:
+                    pass
+            if "fill_hex" in p_dict and drawing is not None:
+                try:
+                    hex_str = p_dict["fill_hex"].lstrip("#")
+                    r = int(hex_str[0:2], 16)
+                    g = int(hex_str[2:4], 16)
+                    b = int(hex_str[4:6], 16)
+                    pf.fill_format.fill_type = slides.FillType.SOLID
+                    pf.fill_format.solid_fill_color.color = \
+                        drawing.Color.from_argb(255, r, g, b)
+                except BaseException:
+                    pass
+
+
 def _truncate_to_fit(text: str, char_limit: int) -> str:
     """
     Truncate text to fit within char_limit.
@@ -1090,6 +1285,303 @@ def swap_table_rows(prs, slide_idx: int, shape_name: str,
 
     return {"status": "ok", "slide_idx": slide_idx, "shape": shape_name,
             "swapped_cells": swapped_cells, "moved_shapes": moved_names}
+
+
+def _row_y_band(table, row_idx: int) -> tuple:
+    """Return (y, h) for a row by cumulative height from table.y."""
+    try:
+        y_cursor = table.y
+        for r in range(row_idx):
+            y_cursor += table.rows[r].height
+        return (y_cursor, table.rows[row_idx].height)
+    except Exception:
+        return (0.0, 0.0)
+
+
+def _find_table_section_rows(table, section_idx: int) -> list:
+    """
+    Re-detect sections on a live Aspose table and return the row indices
+    (header + bullets) for the requested section.
+    """
+    try:
+        from state import extract_shape, _detect_table_sections
+    except Exception:
+        return []
+    try:
+        table_state = extract_shape(table)
+    except Exception:
+        return []
+    if not table_state or table_state.get("type") != "table":
+        return []
+    sections = table_state.get("sections") or _detect_table_sections(table_state)
+    if not sections or section_idx < 0 or section_idx >= len(sections):
+        return []
+    sec = sections[section_idx]
+    return [sec["header_row"]] + list(sec.get("bullet_rows", []))
+
+
+def swap_table_sections(
+    prs,
+    slide_idx_a: int, shape_name_a: str, section_idx_a: int,
+    slide_idx_b: int, shape_name_b: str, section_idx_b: int,
+) -> dict:
+    """
+    Swap two logical sections between tables, possibly on different slides.
+
+    A section is a numbered header row plus its bullet rows (detected by
+    state._detect_table_sections). Handles:
+      - Multi-paragraph cell preservation (bold title + mitigants stay intact)
+      - Cross-table swaps (sections in different tables)
+      - Cross-slide swaps (tables on different slides)
+      - Overlay shape movement, including recreating overlays on the target
+        slide when swapping across slides
+      - Row-height swap so heights travel with content
+
+    v1 requires row counts to match between the two sections.
+    """
+    # --- Validate slides and tables ---
+    if slide_idx_a < 0 or slide_idx_a >= len(prs.slides):
+        return {"status": "error",
+                "message": f"Slide A index {slide_idx_a} out of range"}
+    if slide_idx_b < 0 or slide_idx_b >= len(prs.slides):
+        return {"status": "error",
+                "message": f"Slide B index {slide_idx_b} out of range"}
+
+    slide_a = prs.slides[slide_idx_a]
+    slide_b = prs.slides[slide_idx_b]
+    table_a = _find_shape(slide_a, shape_name_a)
+    table_b = _find_shape(slide_b, shape_name_b)
+    if not table_a or not isinstance(table_a, slides.Table):
+        return {"status": "error",
+                "message": f"Table '{shape_name_a}' not found on slide {slide_idx_a}"}
+    if not table_b or not isinstance(table_b, slides.Table):
+        return {"status": "error",
+                "message": f"Table '{shape_name_b}' not found on slide {slide_idx_b}"}
+
+    # --- Resolve section row index lists ---
+    rows_a = _find_table_section_rows(table_a, section_idx_a)
+    rows_b = _find_table_section_rows(table_b, section_idx_b)
+    if not rows_a:
+        return {"status": "error",
+                "message": f"Section {section_idx_a} not found on {shape_name_a}"}
+    if not rows_b:
+        return {"status": "error",
+                "message": f"Section {section_idx_b} not found on {shape_name_b}"}
+    if len(rows_a) != len(rows_b):
+        return {"status": "error",
+                "message": (f"Section row counts must match "
+                            f"(A={len(rows_a)}, B={len(rows_b)})")}
+
+    # --- Column count bounds (for cross-table with different widths) ---
+    try:
+        cols_a = len(table_a.columns)
+        cols_b = len(table_b.columns)
+    except Exception:
+        return {"status": "error", "message": "Could not read column counts"}
+    shared_cols = min(cols_a, cols_b)
+    if shared_cols == 0:
+        return {"status": "error", "message": "Tables have no columns"}
+
+    # --- Read structural snapshots per cell ---
+    def _read_section(table, row_indices):
+        snapshot = []  # list of row snapshots: each is list of cell paragraph lists
+        for r_idx in row_indices:
+            try:
+                row = table.rows[r_idx]
+            except Exception:
+                return None
+            row_snap = []
+            for c in range(shared_cols):
+                try:
+                    cell = row[c]
+                except Exception:
+                    row_snap.append([])
+                    continue
+                row_snap.append(_read_cell_structure(cell))
+            snapshot.append(row_snap)
+        return snapshot
+
+    snap_a = _read_section(table_a, rows_a)
+    snap_b = _read_section(table_b, rows_b)
+    if snap_a is None or snap_b is None:
+        return {"status": "error", "message": "Could not read section cells"}
+
+    # --- Snapshot row heights (to swap) ---
+    heights_a = []
+    heights_b = []
+    try:
+        for r in rows_a:
+            heights_a.append(table_a.rows[r].height)
+        for r in rows_b:
+            heights_b.append(table_b.rows[r].height)
+    except Exception:
+        heights_a = heights_b = []
+
+    # --- Compute y-bands for each section (for overlay detection) ---
+    # Band A: from top of rows_a[0] to bottom of rows_a[-1]
+    try:
+        a_top_y, _ = _row_y_band(table_a, rows_a[0])
+        a_last_y, a_last_h = _row_y_band(table_a, rows_a[-1])
+        a_bottom_y = a_last_y + a_last_h
+        a_x = table_a.x
+        a_w = table_a.width
+    except Exception:
+        return {"status": "error", "message": "Could not compute section A y-band"}
+    try:
+        b_top_y, _ = _row_y_band(table_b, rows_b[0])
+        b_last_y, b_last_h = _row_y_band(table_b, rows_b[-1])
+        b_bottom_y = b_last_y + b_last_h
+        b_x = table_b.x
+        b_w = table_b.width
+    except Exception:
+        return {"status": "error", "message": "Could not compute section B y-band"}
+
+    # --- Collect overlay shapes in each section's band ---
+    def _collect_overlays(slide, table, top_y, bottom_y, t_x, t_w):
+        captured = []
+        for s in slide.shapes:
+            if s is table or isinstance(s, slides.Table):
+                continue
+            try:
+                sx, sy = s.x, s.y
+                sw, sh = s.width, s.height
+            except Exception:
+                continue
+            cx = sx + sw / 2
+            cy = sy + sh / 2
+            # Must be horizontally overlap table (with slack)
+            if cx < t_x - 36 or cx > t_x + t_w + 36:
+                continue
+            if not (top_y <= cy <= bottom_y):
+                continue
+            # Snapshot shape data for recreation
+            snap = {
+                "x": sx, "y": sy, "w": sw, "h": sh,
+                "rel_y": sy - top_y,  # offset from band top
+                "rel_x": sx - t_x,    # offset from table left
+            }
+            try:
+                snap["name"] = s.name
+            except Exception:
+                snap["name"] = ""
+            try:
+                fill = s.fill_format
+                if fill is not None and fill.fill_type == slides.FillType.SOLID:
+                    c = fill.solid_fill_color.color
+                    snap["fill_hex"] = f"#{c.r:02x}{c.g:02x}{c.b:02x}"
+            except BaseException:
+                pass
+            snap["obj"] = s
+            captured.append(snap)
+        return captured
+
+    overlays_a = _collect_overlays(slide_a, table_a, a_top_y, a_bottom_y, a_x, a_w)
+    overlays_b = _collect_overlays(slide_b, table_b, b_top_y, b_bottom_y, b_x, b_w)
+
+    # --- Write content: A snapshots -> B rows, B snapshots -> A rows ---
+    def _write_section(table, row_indices, snapshot):
+        for ri, r_idx in enumerate(row_indices):
+            try:
+                row = table.rows[r_idx]
+            except Exception:
+                continue
+            row_snap = snapshot[ri] if ri < len(snapshot) else []
+            for c in range(shared_cols):
+                try:
+                    cell = row[c]
+                except Exception:
+                    continue
+                if c < len(row_snap):
+                    _write_cell_preserving_structure(cell, row_snap[c])
+
+    _write_section(table_b, rows_b, snap_a)
+    _write_section(table_a, rows_a, snap_b)
+
+    # --- Swap row heights (best-effort) ---
+    if heights_a and heights_b:
+        for ri, r_idx in enumerate(rows_a):
+            try:
+                table_a.rows[r_idx].minimal_height = heights_b[ri]
+            except Exception:
+                pass
+        for ri, r_idx in enumerate(rows_b):
+            try:
+                table_b.rows[r_idx].minimal_height = heights_a[ri]
+            except Exception:
+                pass
+
+    # --- Move/recreate overlay shapes ---
+    cross_slide = slide_idx_a != slide_idx_b
+    moved_names = []
+
+    def _move_same_slide(overlays, source_top, target_top):
+        delta = target_top - source_top
+        for ov in overlays:
+            s = ov["obj"]
+            try:
+                s.y = ov["y"] + delta
+                moved_names.append(ov.get("name", ""))
+            except Exception:
+                pass
+
+    def _recreate_cross_slide(overlays, source_t_x, target_slide, target_top, target_t_x):
+        new_shapes = []
+        for ov in overlays:
+            new_x = target_t_x + ov["rel_x"]
+            new_y = target_top + ov["rel_y"]
+            try:
+                new_shape = target_slide.shapes.add_auto_shape(
+                    slides.ShapeType.ELLIPSE,
+                    new_x, new_y, ov["w"], ov["h"]
+                )
+            except Exception:
+                continue
+            try:
+                new_shape.name = ov.get("name", "")
+            except Exception:
+                pass
+            if "fill_hex" in ov and drawing is not None:
+                try:
+                    hex_str = ov["fill_hex"].lstrip("#")
+                    r = int(hex_str[0:2], 16)
+                    g = int(hex_str[2:4], 16)
+                    b = int(hex_str[4:6], 16)
+                    new_shape.fill_format.fill_type = slides.FillType.SOLID
+                    new_shape.fill_format.solid_fill_color.color = \
+                        drawing.Color.from_argb(255, r, g, b)
+                except BaseException:
+                    pass
+            moved_names.append(ov.get("name", ""))
+            new_shapes.append(new_shape)
+        return new_shapes
+
+    if cross_slide:
+        # Recreate A's overlays on slide B (inside section B's band)
+        _recreate_cross_slide(overlays_a, a_x, slide_b, b_top_y, b_x)
+        # Recreate B's overlays on slide A (inside section A's band)
+        _recreate_cross_slide(overlays_b, b_x, slide_a, a_top_y, a_x)
+        # Delete originals from their source slides
+        for ov in overlays_a:
+            try:
+                slide_a.shapes.remove(ov["obj"])
+            except Exception:
+                pass
+        for ov in overlays_b:
+            try:
+                slide_b.shapes.remove(ov["obj"])
+            except Exception:
+                pass
+    else:
+        # Same-slide: delta-y movement
+        _move_same_slide(overlays_a, a_top_y, b_top_y)
+        _move_same_slide(overlays_b, b_top_y, a_top_y)
+
+    return {
+        "status": "ok",
+        "rows_swapped": len(rows_a),
+        "overlays_moved": moved_names,
+        "cross_slide": cross_slide,
+    }
 
 
 # ---------------------------------------------------------------------------

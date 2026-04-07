@@ -286,6 +286,12 @@ def extract_shape(shape) -> dict | None:
                 )
             else:
                 base["cell_char_limit"] = 50
+
+            # Detect logical sections (numbered items spanning multiple rows)
+            sections = _detect_table_sections(base)
+            if sections:
+                base["sections"] = sections
+
             return base
         except Exception:
             base["type"] = "table"
@@ -370,6 +376,86 @@ def extract_shape(shape) -> dict | None:
         return base
     except Exception:
         return None
+
+
+import re
+
+_HEADER_ROW_PATTERN = re.compile(
+    r"^\s*[\(\[]?\s*(\d+|[A-Za-z])\s*[\)\.\]]"
+)
+
+
+def _detect_table_sections(table_state: dict) -> list:
+    """
+    Group table rows into logical sections.
+
+    A section starts with a "header row" — one whose first-column text
+    matches a numbered/lettered item pattern like "(1)", "1.", "(a)",
+    or "A." — followed by zero or more non-header rows (typically merged
+    bullet rows).
+
+    Consulting decks commonly structure "Key Risks", "Findings",
+    "Recommendations", and similar tables this way: a title row for each
+    item, then a merged row below with bullet detail.
+
+    Returns a list of section dicts:
+        [{"idx": 0, "header_row": 1, "bullet_rows": [2],
+          "title_preview": "(1) Significant customer..."},
+         ...]
+    Returns empty list if fewer than 2 sections are detected — the table
+    probably isn't section-structured and surfacing spurious sections
+    would mislead the LLM.
+    """
+    rows = table_state.get("rows", [])
+    if not rows or len(rows) < 2:
+        return []
+
+    header_indices = []
+    for r, row in enumerate(rows):
+        if not row:
+            continue
+        first_cell = row[0]
+        text = ""
+        if isinstance(first_cell, dict):
+            text = (first_cell.get("text") or "").strip()
+        if text and _HEADER_ROW_PATTERN.match(text):
+            header_indices.append(r)
+
+    if len(header_indices) < 2:
+        return []
+
+    # First pass: collect raw bullet row ranges
+    raw_sections = []
+    for i, header_idx in enumerate(header_indices):
+        end_idx = header_indices[i + 1] if i + 1 < len(header_indices) else len(rows)
+        raw_sections.append((header_idx, list(range(header_idx + 1, end_idx))))
+
+    # For the last section, cap its bullet rows to the median of prior
+    # sections' bullet counts. This prevents trailing legend/footer rows
+    # from being incorrectly glued to the last numbered item.
+    if len(raw_sections) >= 2:
+        prior_counts = [len(b) for _, b in raw_sections[:-1]]
+        median_count = sorted(prior_counts)[len(prior_counts) // 2]
+        last_header, last_bullets = raw_sections[-1]
+        if len(last_bullets) > median_count:
+            raw_sections[-1] = (last_header, last_bullets[:median_count])
+
+    sections = []
+    for i, (header_idx, bullet_rows) in enumerate(raw_sections):
+        title_text = ""
+        try:
+            first_cell = rows[header_idx][0]
+            if isinstance(first_cell, dict):
+                title_text = (first_cell.get("text") or "").strip()[:80]
+        except Exception:
+            pass
+        sections.append({
+            "idx": i,
+            "header_row": header_idx,
+            "bullet_rows": bullet_rows,
+            "title_preview": title_text,
+        })
+    return sections
 
 
 def _walk_slide_shapes(slide_shapes, parent_group: str = None) -> list:
@@ -689,6 +775,8 @@ def compact_state(state: dict, max_text_chars: int = 500) -> dict:
                     compact_shape["total_rows"] = len(rows)
                 if shape.get("row_overlays"):
                     compact_shape["row_overlays"] = shape["row_overlays"]
+                if shape.get("sections"):
+                    compact_shape["sections"] = shape["sections"]
                 cs["shapes"].append(compact_shape)
 
             elif s_type == "chart":

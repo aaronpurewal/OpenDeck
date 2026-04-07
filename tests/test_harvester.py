@@ -153,6 +153,78 @@ class TestOverlayDetection:
         assert "2" in table_state["row_overlays"]
         assert "Risk Dot 2" in table_state["row_overlays"]["2"]
 
+    def test_sections_detected_in_numbered_table(self):
+        """Table with numbered headers gets sections detected."""
+        prs = slides.Presentation()
+        layout = prs.masters[0].layout_slides[0]
+        prs.slides.insert_empty_slide(len(prs.slides), layout)
+        slide_idx = len(prs.slides) - 1
+        slide = prs.slides[slide_idx]
+
+        col_widths = [200.0, 100.0]
+        row_heights = [30.0, 60.0, 30.0, 60.0]
+        table = slide.shapes.add_table(50.0, 50.0, col_widths, row_heights)
+        table.name = "NumberedTable"
+
+        # Row 0 = header "(1) First risk"
+        # Row 1 = bullets for risk 1
+        # Row 2 = header "(2) Second risk"
+        # Row 3 = bullets for risk 2
+        labels = [("(1) First risk", "bullets for 1"),
+                  ("bullets for 1 continued", ""),
+                  ("(2) Second risk", "bullets for 2"),
+                  ("bullets for 2 continued", "")]
+        for r, (c0, c1) in enumerate(labels):
+            try:
+                cell0 = table.rows[r][0]
+                tf = cell0.text_frame
+                if tf.paragraphs.count > 0 and tf.paragraphs[0].portions.count > 0:
+                    tf.paragraphs[0].portions[0].text = c0
+            except Exception:
+                pass
+
+        state = harvest_deck(prs)
+        slide_state = state["slides"][slide_idx]
+        table_state = None
+        for s in slide_state["shapes"]:
+            if s.get("name") == "NumberedTable":
+                table_state = s
+                break
+        assert table_state is not None
+        sections = table_state.get("sections", [])
+        # Should detect 2 sections — row 0 is "(1)" header, row 2 is "(2)" header
+        assert len(sections) == 2
+        assert sections[0]["header_row"] == 0
+        assert sections[0]["bullet_rows"] == [1]
+        assert sections[1]["header_row"] == 2
+        assert sections[1]["bullet_rows"] == [3]
+        assert sections[0]["title_preview"].startswith("(1)")
+        assert sections[1]["title_preview"].startswith("(2)")
+
+    def test_no_sections_in_plain_table(self):
+        """Table without numbered headers has no sections."""
+        prs = slides.Presentation()
+        layout = prs.masters[0].layout_slides[0]
+        prs.slides.insert_empty_slide(len(prs.slides), layout)
+        slide_idx = len(prs.slides) - 1
+        slide = prs.slides[slide_idx]
+
+        col_widths = [100.0, 100.0]
+        row_heights = [30.0, 30.0]
+        table = slide.shapes.add_table(50.0, 50.0, col_widths, row_heights)
+        table.name = "PlainTable"
+
+        state = harvest_deck(prs)
+        slide_state = state["slides"][slide_idx]
+        table_state = None
+        for s in slide_state["shapes"]:
+            if s.get("name") == "PlainTable":
+                table_state = s
+                break
+        assert table_state is not None
+        # No numbered headers means no sections key (or empty)
+        assert not table_state.get("sections")
+
     def test_oval_outside_table_not_anchored(self):
         prs = slides.Presentation()
         layout = prs.masters[0].layout_slides[0]

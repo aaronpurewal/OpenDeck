@@ -16,7 +16,8 @@ import aspose.slides as slides
 from tools import (
     edit_run, edit_paragraph, edit_table_cell, edit_table_run,
     fill_placeholder, fill_table, clone_slide,
-    move_shape, swap_shape_positions, set_shape_fill, swap_table_rows
+    move_shape, swap_shape_positions, set_shape_fill, swap_table_rows,
+    swap_table_sections
 )
 
 # Aspose evaluation truncates text — detect this
@@ -339,3 +340,176 @@ class TestSwapTableRows:
         result = swap_table_rows(prs, idx, "TestTable", 1, 1)
         assert result["status"] == "ok"
         assert result["swapped_cells"] == 0
+
+
+def _create_section_table(prs, slide_idx, name, x, y,
+                          n_sections=2, col_widths=None,
+                          with_dots=True):
+    """
+    Create a table with numbered sections on the given slide.
+
+    Each section = 2 rows: a header row "(N) Title N" and a bullet row.
+    Returns the table shape.
+    """
+    if col_widths is None:
+        col_widths = [200.0, 60.0, 60.0]
+    row_heights = [40.0] * (n_sections * 2)
+    slide = prs.slides[slide_idx]
+    table = slide.shapes.add_table(x, y, col_widths, row_heights)
+    table.name = name
+
+    for s_idx in range(n_sections):
+        header_row = s_idx * 2
+        bullet_row = header_row + 1
+        try:
+            cell = table.rows[header_row][0]
+            tf = cell.text_frame
+            if tf.paragraphs.count > 0 and tf.paragraphs[0].portions.count > 0:
+                tf.paragraphs[0].portions[0].text = f"({s_idx + 1}) Title {s_idx + 1}"
+        except Exception:
+            pass
+        try:
+            cell = table.rows[bullet_row][0]
+            tf = cell.text_frame
+            if tf.paragraphs.count > 0 and tf.paragraphs[0].portions.count > 0:
+                tf.paragraphs[0].portions[0].text = f"Bullets for section {s_idx + 1}"
+        except Exception:
+            pass
+
+    # Add overlay dots on each header row (centered in col 2 area)
+    if with_dots:
+        total_table_w = sum(col_widths)
+        for s_idx in range(n_sections):
+            header_row = s_idx * 2
+            row_center_y = y + header_row * 40.0 + 20.0
+            dot = slide.shapes.add_auto_shape(
+                slides.ShapeType.ELLIPSE,
+                x + total_table_w - 50.0,  # inside last col
+                row_center_y - 10.0,
+                20.0, 20.0
+            )
+            dot.name = f"Dot {name} S{s_idx}"
+    return table
+
+
+class TestSwapTableSections:
+    def test_same_slide_swap(self):
+        """Sections on the same slide, same table — content and overlays swap."""
+        prs = slides.Presentation()
+        layout = prs.masters[0].layout_slides[0]
+        prs.slides.insert_empty_slide(len(prs.slides), layout)
+        idx = len(prs.slides) - 1
+
+        _create_section_table(prs, idx, "TestTable", 50.0, 50.0, n_sections=2)
+
+        # Capture initial dot y positions
+        slide = prs.slides[idx]
+        initial_dots = {}
+        for s in slide.shapes:
+            if s.name and s.name.startswith("Dot TestTable"):
+                initial_dots[s.name] = s.y
+
+        result = swap_table_sections(
+            prs, idx, "TestTable", 0,
+            idx, "TestTable", 1
+        )
+        assert result["status"] == "ok"
+        assert result["rows_swapped"] == 2
+        assert result["cross_slide"] is False
+
+        # Dots should have swapped y positions
+        final_dots = {}
+        for s in slide.shapes:
+            if s.name and s.name.startswith("Dot TestTable"):
+                final_dots[s.name] = s.y
+
+        assert abs(final_dots["Dot TestTable S0"] - initial_dots["Dot TestTable S1"]) < 2.0
+        assert abs(final_dots["Dot TestTable S1"] - initial_dots["Dot TestTable S0"]) < 2.0
+
+    def test_cross_slide_swap(self):
+        """Sections on different slides — overlays recreated on target slides."""
+        prs = slides.Presentation()
+        layout = prs.masters[0].layout_slides[0]
+        prs.slides.insert_empty_slide(len(prs.slides), layout)
+        prs.slides.insert_empty_slide(len(prs.slides), layout)
+        idx_a = len(prs.slides) - 2
+        idx_b = len(prs.slides) - 1
+
+        _create_section_table(prs, idx_a, "TableA", 50.0, 50.0, n_sections=2)
+        _create_section_table(prs, idx_b, "TableB", 50.0, 50.0, n_sections=2)
+
+        # Before: slide A has 2 dots, slide B has 2 dots
+        dots_a_before = [s.name for s in prs.slides[idx_a].shapes
+                         if s.name and s.name.startswith("Dot TableA")]
+        dots_b_before = [s.name for s in prs.slides[idx_b].shapes
+                         if s.name and s.name.startswith("Dot TableB")]
+        assert len(dots_a_before) == 2
+        assert len(dots_b_before) == 2
+
+        result = swap_table_sections(
+            prs, idx_a, "TableA", 0,
+            idx_b, "TableB", 0
+        )
+        assert result["status"] == "ok"
+        assert result["cross_slide"] is True
+        assert result["rows_swapped"] == 2
+
+        # After: TableA's original dot (S0) was moved to slide B
+        # slide B should now have a "Dot TableA S0" somewhere
+        names_on_b = {s.name for s in prs.slides[idx_b].shapes if s.name}
+        names_on_a = {s.name for s in prs.slides[idx_a].shapes if s.name}
+        assert "Dot TableA S0" in names_on_b
+        assert "Dot TableB S0" in names_on_a
+        # Original dots should be gone from their source slides
+        assert "Dot TableA S0" not in names_on_a
+        assert "Dot TableB S0" not in names_on_b
+
+    def test_row_count_mismatch_returns_error(self):
+        """Sections with different row counts cleanly return an error.
+
+        Note: section detection caps the LAST section's bullet rows to the
+        median of prior sections. So to test mismatch, we make section 0
+        the bigger one (3 rows) and section 1 the smaller (2 rows).
+        """
+        prs = slides.Presentation()
+        layout = prs.masters[0].layout_slides[0]
+        prs.slides.insert_empty_slide(len(prs.slides), layout)
+        idx = len(prs.slides) - 1
+        slide = prs.slides[idx]
+
+        # Row 0: "(1) First" (header)
+        # Row 1: bullet
+        # Row 2: bullet (2nd bullet row for section 0)
+        # Row 3: "(2) Second" (header)
+        # Row 4: bullet
+        # → section 0 = [0,1,2] (3 rows), section 1 = [3,4] (2 rows capped to 1 bullet)
+        col_widths = [150.0]
+        row_heights = [40.0] * 5
+        table = slide.shapes.add_table(50.0, 50.0, col_widths, row_heights)
+        table.name = "Unbalanced"
+
+        texts = ["(1) First", "b1a", "b1b", "(2) Second", "b2"]
+        for r, t in enumerate(texts):
+            try:
+                cell = table.rows[r][0]
+                cell.text_frame.paragraphs[0].portions[0].text = t
+            except Exception:
+                pass
+
+        result = swap_table_sections(
+            prs, idx, "Unbalanced", 0,
+            idx, "Unbalanced", 1
+        )
+        assert result["status"] == "error"
+        assert "row counts" in result["message"].lower()
+
+    def test_table_not_found_returns_error(self):
+        prs = slides.Presentation()
+        layout = prs.masters[0].layout_slides[0]
+        prs.slides.insert_empty_slide(len(prs.slides), layout)
+        idx = len(prs.slides) - 1
+        result = swap_table_sections(
+            prs, idx, "NonexistentTable", 0,
+            idx, "NonexistentTable", 1
+        )
+        assert result["status"] == "error"
