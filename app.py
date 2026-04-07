@@ -61,10 +61,16 @@ header[data-testid="stHeader"] {
     max-width: 1200px;
 }
 
-/* Sidebar — soft dark */
+/* Sidebar — soft dark, narrower */
 [data-testid="stSidebar"] {
     background: #18181B;
     border-right: 1px solid #27272A;
+    width: 220px !important;
+    min-width: 220px !important;
+}
+[data-testid="stSidebar"] > div:first-child {
+    width: 220px !important;
+    min-width: 220px !important;
 }
 [data-testid="stSidebar"] * {
     color: #A1A1AA !important;
@@ -599,10 +605,9 @@ _PROVIDER_LABELS = {
 }
 
 with st.sidebar:
-    st.markdown("""<div style="padding:4px 0 16px 0;">
-        <span style="font-size:18px; font-weight:800; color:#FAFAFA !important;
-            letter-spacing:-0.03em;">SSE</span>
-        <span style="font-size:10px; color:#52525B !important; margin-left:6px;">Settings</span>
+    st.markdown("""<div style="padding:4px 0 14px 0;">
+        <span style="font-size:14px; font-weight:700; color:#FAFAFA !important;
+            letter-spacing:-0.02em;">OpenDeck</span>
     </div>""", unsafe_allow_html=True)
 
     provider = st.selectbox(
