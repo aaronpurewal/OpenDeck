@@ -1047,46 +1047,48 @@ with right_col:
     if st.session_state.phase == "upload" and not st.session_state.prs:
       with right_body:
         st.markdown("""
-        <div style="text-align:center; padding:60px 20px; animation:fadeIn 0.5s ease;">
+        <div style="text-align:center; padding:24px 16px 20px 16px;
+            animation:fadeIn 0.5s ease;">
             <div style="display:inline-flex; align-items:center; justify-content:center;
-                width:64px; height:64px; border-radius:16px;
+                width:52px; height:52px; border-radius:14px;
                 background:linear-gradient(135deg, #6366F1, #8B5CF6);
-                margin-bottom:20px; box-shadow:0 4px 16px rgba(99,102,241,0.2);">
-                <span style="color:white; font-size:28px;">&#9638;</span>
+                margin-bottom:14px; box-shadow:0 4px 16px rgba(99,102,241,0.2);">
+                <span style="color:white; font-size:24px;">&#9638;</span>
             </div>
-            <h2 style="font-size:24px; font-weight:700; color:#18181B;
-                letter-spacing:-0.03em; margin:0 0 8px 0;">
+            <h2 style="font-size:22px; font-weight:700; color:#18181B;
+                letter-spacing:-0.03em; margin:0 0 6px 0;">
                 Edit any PowerPoint with AI</h2>
-            <p style="font-size:15px; color:#71717A; margin:0 0 36px 0; max-width:400px;
-                display:inline-block; line-height:1.6;">
+            <p style="font-size:14px; color:#71717A; margin:0 auto 22px auto;
+                max-width:420px; line-height:1.55;">
                 Upload your deck, describe what you want changed, review the plan,
                 and download the result. All formatting preserved.</p>
-            <div style="display:flex; justify-content:center; gap:12px; flex-wrap:wrap;">
+            <div style="display:flex; justify-content:center; gap:10px; flex-wrap:wrap;
+                padding-bottom:16px;">
                 <div style="background:white; border:1px solid #F4F4F5; border-radius:12px;
-                    padding:18px 22px; text-align:center; min-width:150px;
+                    padding:14px 18px; text-align:center; min-width:140px;
                     box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-                    <div style="font-size:20px; margin-bottom:8px;">&#127919;</div>
-                    <p style="font-size:13px; font-weight:600; color:#18181B; margin:0 0 4px 0;">
+                    <div style="font-size:18px; margin-bottom:6px;">&#127919;</div>
+                    <p style="font-size:13px; font-weight:600; color:#18181B; margin:0 0 3px 0;">
                         AI-Powered Plans</p>
-                    <p style="font-size:12px; color:#A1A1AA; margin:0; line-height:1.4;">
+                    <p style="font-size:11px; color:#A1A1AA; margin:0; line-height:1.4;">
                         Review before anything runs</p>
                 </div>
                 <div style="background:white; border:1px solid #F4F4F5; border-radius:12px;
-                    padding:18px 22px; text-align:center; min-width:150px;
+                    padding:14px 18px; text-align:center; min-width:140px;
                     box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-                    <div style="font-size:20px; margin-bottom:8px;">&#9999;</div>
-                    <p style="font-size:13px; font-weight:600; color:#18181B; margin:0 0 4px 0;">
+                    <div style="font-size:18px; margin-bottom:6px;">&#9999;</div>
+                    <p style="font-size:13px; font-weight:600; color:#18181B; margin:0 0 3px 0;">
                         Surgical Precision</p>
-                    <p style="font-size:12px; color:#A1A1AA; margin:0; line-height:1.4;">
+                    <p style="font-size:11px; color:#A1A1AA; margin:0; line-height:1.4;">
                         Only changes what you ask</p>
                 </div>
                 <div style="background:white; border:1px solid #F4F4F5; border-radius:12px;
-                    padding:18px 22px; text-align:center; min-width:150px;
+                    padding:14px 18px; text-align:center; min-width:140px;
                     box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-                    <div style="font-size:20px; margin-bottom:8px;">&#128274;</div>
-                    <p style="font-size:13px; font-weight:600; color:#18181B; margin:0 0 4px 0;">
+                    <div style="font-size:18px; margin-bottom:6px;">&#128274;</div>
+                    <p style="font-size:13px; font-weight:600; color:#18181B; margin:0 0 3px 0;">
                         Brand-Safe</p>
-                    <p style="font-size:12px; color:#A1A1AA; margin:0; line-height:1.4;">
+                    <p style="font-size:11px; color:#A1A1AA; margin:0; line-height:1.4;">
                         Preserves all formatting</p>
                 </div>
             </div>
