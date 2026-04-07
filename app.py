@@ -72,10 +72,12 @@ html, body {
     overflow: hidden !important;
 }
 
-/* Main block container: tight padding, viewport height */
+/* Main block container: breathing room on all sides, viewport height */
 .block-container {
-    padding-top: 0.75rem !important;
-    padding-bottom: 0.5rem !important;
+    padding-top: 1.25rem !important;
+    padding-bottom: 1.5rem !important;
+    padding-left: 1.75rem !important;
+    padding-right: 1.75rem !important;
     max-width: 1280px;
     height: 100vh !important;
     overflow: hidden !important;
@@ -682,7 +684,7 @@ st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
 # Main Layout
 # ---------------------------------------------------------------------------
 
-_MAIN_HEIGHT = 520  # Fits in 768+ viewports after header/topbar/breadcrumb
+_MAIN_HEIGHT = 480  # Fits in 768+ viewports after header/topbar/breadcrumb/padding
 
 left_col, right_col = st.columns([1, 2])
 
