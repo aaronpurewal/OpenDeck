@@ -61,55 +61,13 @@ header[data-testid="stHeader"] {
     max-width: 1200px;
 }
 
-/* Sidebar — soft dark, narrower */
+/* Hide sidebar entirely */
 [data-testid="stSidebar"] {
-    background: #18181B;
-    border-right: 1px solid #27272A;
-    width: 220px !important;
-    min-width: 220px !important;
+    display: none !important;
 }
-[data-testid="stSidebar"] > div:first-child {
-    width: 220px !important;
-    min-width: 220px !important;
+[data-testid="collapsedControl"] {
+    display: none !important;
 }
-[data-testid="stSidebar"] * {
-    color: #A1A1AA !important;
-}
-[data-testid="stSidebar"] h1,
-[data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3 {
-    color: #FAFAFA !important;
-    font-size: 12px !important;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-weight: 600;
-}
-[data-testid="stSidebar"] hr {
-    border-color: #27272A !important;
-}
-[data-testid="stSidebar"] .stSelectbox label {
-    font-size: 12px !important;
-    font-weight: 500;
-    color: #71717A !important;
-}
-[data-testid="stSidebar"] [data-testid="stMetricValue"] {
-    color: #FAFAFA !important;
-    font-size: 28px !important;
-    font-weight: 700;
-}
-[data-testid="stSidebar"] [data-testid="stMetricLabel"] {
-    font-size: 11px !important;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: #71717A !important;
-}
-[data-testid="stSidebar"] .stSelectbox > div > div {
-    background: #27272A;
-    border: 1px solid #3F3F46;
-    color: #FAFAFA !important;
-    border-radius: 8px;
-}
-
 /* Buttons — rounded, modern */
 .stButton > button {
     font-family: 'Inter', sans-serif;
@@ -594,7 +552,7 @@ st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
-# Sidebar
+# Top bar: Model selector + deck stats
 # ---------------------------------------------------------------------------
 
 _PROVIDER_OPTIONS = ["openai", "anthropic", "local"]
@@ -604,51 +562,60 @@ _PROVIDER_LABELS = {
     "local": "Local (LM Studio)",
 }
 
-with st.sidebar:
-    st.markdown("""<div style="padding:4px 0 14px 0;">
-        <span style="font-size:14px; font-weight:700; color:#FAFAFA !important;
-            letter-spacing:-0.02em;">OpenDeck</span>
-    </div>""", unsafe_allow_html=True)
+_topbar_cols = st.columns([2, 1, 1, 1])
 
+with _topbar_cols[0]:
     provider = st.selectbox(
         "Model",
         _PROVIDER_OPTIONS,
         index=_PROVIDER_OPTIONS.index(st.session_state.provider)
               if st.session_state.provider in _PROVIDER_OPTIONS else 1,
-        format_func=lambda x: _PROVIDER_LABELS.get(x, x)
+        format_func=lambda x: _PROVIDER_LABELS.get(x, x),
+        label_visibility="collapsed"
     )
     st.session_state.provider = provider
 
+with _topbar_cols[1]:
     if provider == "local":
-        st.caption(f"{LOCAL_API_BASE}")
         try:
             import urllib.request
             urllib.request.urlopen(LOCAL_API_BASE.replace("/v1", ""), timeout=1)
-            st.markdown('<div style="display:flex; align-items:center; gap:6px;">'
+            st.markdown('<div style="display:flex; align-items:center; gap:6px; '
+                        'padding:8px 12px; background:#ECFDF5; border:1px solid #A7F3D0; '
+                        'border-radius:8px;">'
                         '<span style="width:6px; height:6px; border-radius:50%; '
                         'background:#10B981; display:inline-block;"></span>'
-                        '<span style="font-size:11px; color:#10B981 !important;">Connected</span>'
-                        '</div>', unsafe_allow_html=True)
+                        '<span style="font-size:12px; color:#059669; font-weight:500;">'
+                        'Connected</span></div>', unsafe_allow_html=True)
         except Exception:
-            st.markdown('<div style="display:flex; align-items:center; gap:6px;">'
+            st.markdown('<div style="display:flex; align-items:center; gap:6px; '
+                        'padding:8px 12px; background:#FEF3C7; border:1px solid #FDE68A; '
+                        'border-radius:8px;">'
                         '<span style="width:6px; height:6px; border-radius:50%; '
                         'background:#F59E0B; display:inline-block;"></span>'
-                        '<span style="font-size:11px; color:#F59E0B !important;">'
+                        '<span style="font-size:12px; color:#D97706; font-weight:500;">'
                         'Not reachable</span></div>', unsafe_allow_html=True)
 
-    if st.session_state.deck_state:
-        st.divider()
-        col_s, col_l = st.columns(2)
-        with col_s:
-            st.metric("Slides", st.session_state.deck_state.get("slide_count", 0))
-        with col_l:
-            layouts = st.session_state.deck_state.get("master_layouts", [])
-            st.metric("Layouts", len(layouts))
+if st.session_state.deck_state:
+    with _topbar_cols[2]:
+        st.markdown(f'<div style="padding:8px 12px; background:#F4F4F5; '
+                    f'border:1px solid #E4E4E7; border-radius:8px; text-align:center;">'
+                    f'<span style="font-size:11px; color:#71717A; text-transform:uppercase; '
+                    f'letter-spacing:0.05em; font-weight:600;">Slides</span> '
+                    f'<span style="font-size:14px; color:#18181B; font-weight:700; '
+                    f'margin-left:6px;">{st.session_state.deck_state.get("slide_count", 0)}</span>'
+                    f'</div>', unsafe_allow_html=True)
+    with _topbar_cols[3]:
+        layouts = len(st.session_state.deck_state.get("master_layouts", []))
+        st.markdown(f'<div style="padding:8px 12px; background:#F4F4F5; '
+                    f'border:1px solid #E4E4E7; border-radius:8px; text-align:center;">'
+                    f'<span style="font-size:11px; color:#71717A; text-transform:uppercase; '
+                    f'letter-spacing:0.05em; font-weight:600;">Layouts</span> '
+                    f'<span style="font-size:14px; color:#18181B; font-weight:700; '
+                    f'margin-left:6px;">{layouts}</span>'
+                    f'</div>', unsafe_allow_html=True)
 
-    st.divider()
-    st.markdown('<p style="font-size:10px; color:#3F3F46 !important;'
-                'text-align:center;">Plan-then-Execute Architecture</p>',
-                unsafe_allow_html=True)
+st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
