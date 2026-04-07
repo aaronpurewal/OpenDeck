@@ -526,23 +526,38 @@ def _timer_stop():
 # ---------------------------------------------------------------------------
 
 st.markdown("""
-<div style="padding:20px 24px 16px 24px;
-    background: linear-gradient(135deg, #18181B 0%, #27272A 100%);
-    border-bottom: 1px solid #3F3F46; border-radius:12px;">
-    <div style="display:flex; align-items:center; justify-content:space-between;">
-        <div style="display:flex; align-items:center; gap:10px;">
-            <div style="width:32px; height:32px; border-radius:8px;
-                background:linear-gradient(135deg, #6366F1, #8B5CF6);
-                display:flex; align-items:center; justify-content:center;">
-                <span style="color:white; font-size:16px;">&#9638;</span>
-            </div>
-            <span style="color:#FAFAFA; font-size:16px; font-weight:700;
-                letter-spacing:-0.02em;">OpenDeck</span>
+<div style="position:relative; padding:36px 24px 32px 24px;
+    background: radial-gradient(ellipse at top, #1E1B4B 0%, #18181B 60%, #0A0A0B 100%);
+    border-radius:16px; overflow:hidden; text-align:center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1), 0 8px 24px rgba(99,102,241,0.08);">
+    <div style="position:absolute; top:0; left:50%; transform:translateX(-50%);
+        width:60%; height:1px;
+        background:linear-gradient(90deg, transparent, #6366F1, transparent);"></div>
+    <div style="position:absolute; top:-40px; left:50%; transform:translateX(-50%);
+        width:300px; height:80px; border-radius:50%;
+        background:radial-gradient(ellipse, rgba(99,102,241,0.25), transparent 70%);
+        filter: blur(20px);"></div>
+    <div style="position:relative; display:inline-flex; align-items:center; gap:14px;
+        margin-bottom:12px;">
+        <div style="width:42px; height:42px; border-radius:12px;
+            background:linear-gradient(135deg, #6366F1, #8B5CF6);
+            display:inline-flex; align-items:center; justify-content:center;
+            box-shadow: 0 4px 16px rgba(99,102,241,0.4),
+                        inset 0 1px 0 rgba(255,255,255,0.2);">
+            <span style="color:white; font-size:20px;">&#9638;</span>
         </div>
-        <span style="background:#3F3F46; color:#A1A1AA;
-            padding:4px 12px; border-radius:20px; font-size:11px; font-weight:500;">v1.0</span>
+        <span style="color:#FAFAFA; font-size:28px; font-weight:800;
+            letter-spacing:-0.04em;
+            background: linear-gradient(135deg, #FAFAFA 0%, #C7D2FE 100%);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text;">OpenDeck</span>
+        <span style="background:rgba(99,102,241,0.15); color:#A5B4FC;
+            border:1px solid rgba(99,102,241,0.3);
+            padding:4px 10px; border-radius:20px; font-size:10px; font-weight:600;
+            letter-spacing:0.05em;">v1.0</span>
     </div>
-    <p style="color:#71717A; font-size:13px; margin:10px 0 0 42px; line-height:1.5;">
+    <p style="color:#A1A1AA; font-size:14px; margin:0; line-height:1.5;
+        max-width:520px; display:inline-block;">
         Upload a deck, describe what you want changed, and download the result.
     </p>
 </div>
@@ -565,8 +580,12 @@ _PROVIDER_LABELS = {
 _topbar_cols = st.columns([2, 1, 1, 1])
 
 with _topbar_cols[0]:
+    st.markdown('<p style="font-size:11px; font-weight:600; color:#71717A; '
+                'text-transform:uppercase; letter-spacing:0.06em; '
+                'margin:0 0 4px 0;">Model Selector</p>',
+                unsafe_allow_html=True)
     provider = st.selectbox(
-        "Model",
+        "Model Selector",
         _PROVIDER_OPTIONS,
         index=_PROVIDER_OPTIONS.index(st.session_state.provider)
               if st.session_state.provider in _PROVIDER_OPTIONS else 1,
