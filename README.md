@@ -36,6 +36,35 @@ Tell it *"update Q3 revenue to $4.2M and add an executive summary slide"* and it
 
 **It's architecturally bulletproof.** The LLM never sees your PowerPoint file. It receives abstract JSON and returns abstract JSON. A deterministic executor translates those instructions into precise operations. The AI decides *what* to change; the code decides *how* — no hallucinated Python, no corrupted files, no broken XML.
 
+## Aspose + AI = OpenDeck
+
+OpenDeck is built on top of [Aspose.Slides](https://products.aspose.com/slides/) — the industry-standard library for programmatic PowerPoint manipulation. Aspose is what gives OpenDeck the ability to read, edit, and write PPTX files without corrupting them. It's battle-tested, used by Fortune 500 enterprises, and handles every edge case of the Office Open XML format.
+
+But Aspose alone isn't enough. It's a low-level library — you can clone slides, fill placeholders, edit text runs, and create charts, but you have to know exactly which shape to touch and what to write. It has no intelligence. A non-developer can't use it.
+
+**OpenDeck is the AI layer that makes Aspose usable by anyone.**
+
+### Why hasn't Aspose built this themselves?
+
+Aspose does have some AI features, but they're limited to exactly two things:
+
+1. **Generation from scratch** (`GeneratePresentationAsync`) — you give it a prompt, it creates a brand new deck. Same pattern as Gamma/Tome. Destroys your branded template.
+2. **Whole-deck translation** (`TranslateAsync`) — walks every text run and swaps it for a translated version. One verb only: translate every string to a target language.
+
+**That's it.** Across their entire AI namespace, there is no feature that reads an existing deck and applies targeted, natural-language-driven edits. You cannot tell Aspose "update the revenue number on slide 4 to $12M" or "add an executive summary slide after slide 2 matching the style of slide 5." Aspose themselves acknowledge in their own docs that the generator output requires "minor post-editing" — but they provide no AI tooling to do that editing.
+
+The gap is enormous. Aspose has the world's best PPTX manipulation engine, but their AI layer uses the LLM as a one-shot content source, not as a planner that reasons over an existing deck.
+
+**OpenDeck bridges that gap.** It introduces:
+
+- **Deck harvesting** — extracting every slide, shape, text run, table, and chart into structured JSON the LLM can reason over
+- **Two-pass planning** — the LLM first generates a lightweight structural plan (clone this, fill that, edit this run), the user approves, then content is generated
+- **Slide-level addressing** — the LLM references slides and shapes by stable labels, never by fragile indices
+- **Deterministic execution** — a plan walker translates the LLM's JSON into precise Aspose operations with no room for hallucinated code
+- **Validation layer** — placeholder detection, data integrity checks, and smoke tests that re-open the saved file to catch corruption
+
+This is the architecture Aspose's AI offering is missing — the plan/execute loop that turns natural language into surgical edits on an existing deck. OpenDeck is what you get when you treat Aspose as a precision instrument and use an LLM to wield it.
+
 ## What It Does
 
 - Upload any `.pptx` file
@@ -234,6 +263,10 @@ OpenDeck/
 - **[OpenAI SDK](https://github.com/openai/openai-python)** — OpenAI + local model provider
 - **[Anthropic SDK](https://github.com/anthropics/anthropic-sdk-python)** — Claude provider
 - **Python 3.10+** — Type hints with `dict`, `list`, `|` union syntax
+
+## Contributing
+
+Contributions are welcome!
 
 ## Commercial Licensing
 
