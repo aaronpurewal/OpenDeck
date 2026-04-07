@@ -55,10 +55,51 @@ header[data-testid="stHeader"] {
     height: 0 !important;
 }
 
-/* Remove default top padding */
+/* Lock viewport — no outer scroll */
+html, body {
+    overflow: hidden !important;
+    height: 100vh !important;
+}
+.stApp {
+    height: 100vh !important;
+    overflow: hidden !important;
+}
+[data-testid="stAppViewContainer"] {
+    overflow: hidden !important;
+    height: 100vh !important;
+}
+[data-testid="stMain"] {
+    overflow: hidden !important;
+}
+
+/* Main block container: tight padding, viewport height */
 .block-container {
-    padding-top: 1rem !important;
-    max-width: 1200px;
+    padding-top: 0.75rem !important;
+    padding-bottom: 0.5rem !important;
+    max-width: 1280px;
+    height: 100vh !important;
+    overflow: hidden !important;
+}
+
+/* Scrollable containers (st.container with height) */
+[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlock"]:has(> div > [data-testid="stVerticalBlock"]) {
+    scrollbar-width: thin;
+}
+[data-testid="stVerticalBlockBorderWrapper"] {
+    border: none !important;
+}
+
+/* Thin custom scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-thumb {
+    background: #D4D4D8;
+    border-radius: 3px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
 }
 
 /* Hide sidebar entirely */
@@ -641,6 +682,8 @@ st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
 # Main Layout
 # ---------------------------------------------------------------------------
 
+_MAIN_HEIGHT = 520  # Fits in 768+ viewports after header/topbar/breadcrumb
+
 left_col, right_col = st.columns([1, 2])
 
 # === LEFT COLUMN: Upload + Preview ===
@@ -671,30 +714,30 @@ with left_col:
             except Exception as e:
                 st.error(f"Failed to load deck: {str(e)}")
 
-    # Show slide thumbnails
-    if st.session_state.prs:
-        thumbnails = render_slide_thumbnails(st.session_state.prs)
-        if thumbnails:
-            for i, thumb_path in enumerate(thumbnails):
-                st.markdown(f"""<div style="position:relative; margin-bottom:4px;">
-                    <span style="position:absolute; top:6px; left:6px; z-index:10;
-                        background:linear-gradient(135deg, #6366F1, #8B5CF6);
-                        color:white; width:22px; height:22px; border-radius:6px;
-                        display:flex; align-items:center; justify-content:center;
-                        font-size:11px; font-weight:700; box-shadow:0 2px 4px rgba(0,0,0,0.15);"
-                    >{i + 1}</span>
-                </div>""", unsafe_allow_html=True)
-                st.image(thumb_path, use_container_width=True)
-        else:
-            if st.session_state.deck_state:
-                for slide in st.session_state.deck_state.get("slides", []):
-                    layout = slide.get("layout_name", "Unknown")
-                    shapes = len(slide.get("shapes", []))
-                    st.text(f"  {slide['label']}: {layout} ({shapes} shapes)")
+    # Scrollable thumbnail pane
+    with st.container(height=_MAIN_HEIGHT, border=False):
+        if st.session_state.prs:
+            thumbnails = render_slide_thumbnails(st.session_state.prs)
+            if thumbnails:
+                for i, thumb_path in enumerate(thumbnails):
+                    st.markdown(f"""<div style="position:relative; margin-bottom:4px;">
+                        <span style="position:absolute; top:6px; left:6px; z-index:10;
+                            background:linear-gradient(135deg, #6366F1, #8B5CF6);
+                            color:white; width:22px; height:22px; border-radius:6px;
+                            display:flex; align-items:center; justify-content:center;
+                            font-size:11px; font-weight:700; box-shadow:0 2px 4px rgba(0,0,0,0.15);"
+                        >{i + 1}</span>
+                    </div>""", unsafe_allow_html=True)
+                    st.image(thumb_path, use_container_width=True)
+            else:
+                if st.session_state.deck_state:
+                    for slide in st.session_state.deck_state.get("slides", []):
+                        layout = slide.get("layout_name", "Unknown")
+                        shapes = len(slide.get("shapes", []))
+                        st.text(f"  {slide['label']}: {layout} ({shapes} shapes)")
 
-    # Download button
+    # Download button (outside scrollable area so it's always visible)
     if st.session_state.output_path and os.path.exists(st.session_state.output_path):
-        st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
         with open(st.session_state.output_path, "rb") as f:
             st.download_button(
                 "Download Result",
@@ -710,21 +753,25 @@ with left_col:
 with right_col:
     _render_phase_indicator(st.session_state.phase)
 
-    # Show chat history
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            if msg.get("is_plan"):
-                _render_plan_display(msg["content"])
-            elif msg.get("is_log"):
-                log = msg["content"].get("log", [])
-                ok = sum(1 for l in log if l.get("status") == "ok")
-                err = sum(1 for l in log if l.get("status") == "error")
-                st.markdown(f"**{ok} operations succeeded, {err} failed**")
-            else:
-                st.markdown(msg["content"])
+    # Scrollable content container — everything phase-specific goes inside
+    right_body = st.container(height=_MAIN_HEIGHT, border=False)
+    with right_body:
+        # Show chat history
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                if msg.get("is_plan"):
+                    _render_plan_display(msg["content"])
+                elif msg.get("is_log"):
+                    log = msg["content"].get("log", [])
+                    ok = sum(1 for l in log if l.get("status") == "ok")
+                    err = sum(1 for l in log if l.get("status") == "error")
+                    st.markdown(f"**{ok} operations succeeded, {err} failed**")
+                else:
+                    st.markdown(msg["content"])
 
     # --- PLANNING PHASE ---
     if st.session_state.phase == "planning":
+      with right_body:
         st.session_state.auto_approve = st.toggle(
             "Auto-approve plan",
             value=st.session_state.auto_approve,
@@ -777,6 +824,7 @@ with right_col:
 
     # --- REVIEW PHASE ---
     if st.session_state.phase == "review":
+      with right_body:
         _timer_pause()
         _render_stopwatch(running=False)
         st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
@@ -800,6 +848,7 @@ with right_col:
 
     # --- EDIT PLAN PHASE ---
     if st.session_state.phase == "editing":
+      with right_body:
         st.divider()
         st.markdown(_card(
             '<div style="display:flex; align-items:center; gap:8px;">'
@@ -833,6 +882,7 @@ with right_col:
 
     # --- EXECUTING PHASE ---
     if st.session_state.phase == "executing":
+      with right_body:
         st.divider()
         _render_stopwatch(running=True)
 
@@ -908,6 +958,7 @@ with right_col:
 
     # --- DONE PHASE ---
     if st.session_state.phase == "done":
+      with right_body:
         st.divider()
 
         final = st.session_state.timer_final
@@ -994,6 +1045,7 @@ with right_col:
 
     # --- UPLOAD PHASE (no deck loaded) ---
     if st.session_state.phase == "upload" and not st.session_state.prs:
+      with right_body:
         st.markdown("""
         <div style="text-align:center; padding:60px 20px; animation:fadeIn 0.5s ease;">
             <div style="display:inline-flex; align-items:center; justify-content:center;
