@@ -2,6 +2,9 @@
 
 LLM-powered PowerPoint editing that **perfectly matches your slide master**. Give it a natural language instruction, and it surgically modifies exactly what you ask. Every font, color, margin, and bullet style stays pixel-perfect.
 
+<img width="1509" height="884" alt="Screenshot 2026-04-08 at 12 47 23 PM" src="https://github.com/user-attachments/assets/0e22c973-a5e6-48bd-8c8e-62dbca3c595c" />
+
+
 ## The Problem
 
 If you've worked in consulting or finance, you know: **slide formatting is sacred.** A McKinsey deck has specific fonts. A Goldman pitch book has exact margins. A Deloitte deliverable follows a rigid brand template down to the bullet indent level. Getting these wrong isn't a cosmetic issue. It's a credibility issue.
