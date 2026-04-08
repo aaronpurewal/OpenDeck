@@ -244,11 +244,18 @@ def execute_plan(plan: dict, prs, label_list: list) -> dict:
                 continue
 
             # Build args, replacing label with resolved index
-            # Filter out keys that are metadata, not function args
+            # Filter out keys that are metadata, not function args.
+            # Note: char_limit IS passed through to tools (edit_table_cell,
+            # edit_table_run, etc.) so they can enforce size caps.
             skip_keys = {"action", "reasoning", "slide_label", "instruction",
-                        "char_limit", "columns"}
+                        "columns"}
             args = {k: v for k, v in step.items() if k not in skip_keys}
             args["slide_idx"] = slide_idx
+
+            # Only pass char_limit to tools that accept it
+            if action not in ("edit_table_cell", "edit_table_run",
+                              "fill_placeholder", "fill_table"):
+                args.pop("char_limit", None)
 
             # Validate required args for table operations
             if action in ("edit_table_cell", "edit_table_run"):

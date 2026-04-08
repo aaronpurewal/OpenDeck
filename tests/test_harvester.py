@@ -201,6 +201,34 @@ class TestOverlayDetection:
         assert sections[0]["title_preview"].startswith("(1)")
         assert sections[1]["title_preview"].startswith("(2)")
 
+    def test_row_char_limits_per_row(self):
+        """Each table row should have its own char_limit in harvested state."""
+        prs = slides.Presentation()
+        layout = prs.masters[0].layout_slides[0]
+        prs.slides.insert_empty_slide(len(prs.slides), layout)
+        slide_idx = len(prs.slides) - 1
+        slide = prs.slides[slide_idx]
+
+        col_widths = [200.0, 100.0]
+        # Different row heights so different char limits
+        row_heights = [20.0, 60.0, 120.0]
+        table = slide.shapes.add_table(50.0, 50.0, col_widths, row_heights)
+        table.name = "MultiHeightTable"
+
+        state = harvest_deck(prs)
+        slide_state = state["slides"][slide_idx]
+        table_state = None
+        for s in slide_state["shapes"]:
+            if s.get("name") == "MultiHeightTable":
+                table_state = s
+                break
+        assert table_state is not None
+        limits = table_state.get("row_char_limits", [])
+        assert len(limits) == 3
+        assert all(isinstance(l, int) and l > 0 for l in limits)
+        # Taller rows should have larger limits
+        assert limits[2] > limits[0]
+
     def test_no_sections_in_plain_table(self):
         """Table without numbered headers has no sections."""
         prs = slides.Presentation()

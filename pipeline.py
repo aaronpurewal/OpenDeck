@@ -276,6 +276,48 @@ def step3_execute(plan: dict, deck_state: dict, prs,
     content_result = execute_plan(content_plan, prs, label_list)
     log.extend(content_result["log"])
 
+    # --- Phase C.5: Auto-fit tables that overflow slide bottom ---
+    # Post-write safety net: pre-write truncation is the primary defense
+    # but some edits still push tables past slide bounds. Shrink fonts
+    # in the tallest rows until the table fits.
+    from tools import fit_tables_to_slide
+    edited_slide_labels = set()
+    for step in content.get("content_updates", []):
+        lbl = step.get("slide_label")
+        if lbl:
+            edited_slide_labels.add(lbl)
+        if step.get("action") == "swap_table_sections":
+            for key in ("slide_label_a", "slide_label_b"):
+                l2 = step.get(key)
+                if l2:
+                    edited_slide_labels.add(l2)
+    fit_warnings = []
+    for lbl in edited_slide_labels:
+        try:
+            s_idx = label_list.index(lbl)
+        except ValueError:
+            continue
+        fit_result = fit_tables_to_slide(
+            prs, s_idx,
+            bottom_margin=5.0,
+            max_iterations=50,
+            min_font_height=7.0
+        )
+        if fit_result.get("shrunk"):
+            for entry in fit_result["shrunk"]:
+                fit_warnings.append(
+                    f"{lbl} {entry['name']}: shrunk fonts "
+                    f"({entry['iterations']} iterations, "
+                    f"{entry['initial_bottom']:.0f}→{entry['final_bottom']:.0f}pt)"
+                )
+        if fit_result.get("overflow_remaining"):
+            for entry in fit_result["overflow_remaining"]:
+                fit_warnings.append(
+                    f"{lbl} {entry['name']}: still overflows by "
+                    f"{entry['overflow_pt']:.0f}pt "
+                    f"({'min font hit' if entry.get('hit_floor') else 'unknown'})"
+                )
+
     # --- Phase D: Validate ---
     # Placeholder detection
     placeholder_result = check_placeholders(prs)
@@ -325,6 +367,7 @@ def step3_execute(plan: dict, deck_state: dict, prs,
         "output_path": output_path,
         "log": log,
         "data_warnings": data_warnings,
+        "fit_warnings": fit_warnings,
         "placeholder_check": placeholder_result["status"]
     }
 

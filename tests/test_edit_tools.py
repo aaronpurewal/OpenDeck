@@ -17,7 +17,7 @@ from tools import (
     edit_run, edit_paragraph, edit_table_cell, edit_table_run,
     fill_placeholder, fill_table, clone_slide,
     move_shape, swap_shape_positions, set_shape_fill, swap_table_rows,
-    swap_table_sections
+    swap_table_sections, fit_tables_to_slide
 )
 
 # Aspose evaluation truncates text — detect this
@@ -512,4 +512,124 @@ class TestSwapTableSections:
             prs, idx, "NonexistentTable", 0,
             idx, "NonexistentTable", 1
         )
+        assert result["status"] == "error"
+
+
+class TestPreWriteTruncation:
+    """char_limit on edit_table_cell / edit_table_run truncates text."""
+
+    def test_edit_table_cell_truncates(self):
+        prs = slides.Presentation()
+        layout = prs.masters[0].layout_slides[0]
+        prs.slides.insert_empty_slide(len(prs.slides), layout)
+        idx = len(prs.slides) - 1
+        slide = prs.slides[idx]
+
+        col_widths = [150.0, 150.0]
+        row_heights = [40.0, 40.0]
+        table = slide.shapes.add_table(50.0, 50.0, col_widths, row_heights)
+        table.name = "T"
+
+        long_text = "x" * 500
+        result = edit_table_cell(
+            prs, idx, "T", row_idx=1, col_idx=0,
+            new_text=long_text, char_limit=50
+        )
+        assert result["status"] == "ok"
+        assert result.get("truncated") is True
+
+    def test_edit_table_cell_no_truncation_when_under_limit(self):
+        prs = slides.Presentation()
+        layout = prs.masters[0].layout_slides[0]
+        prs.slides.insert_empty_slide(len(prs.slides), layout)
+        idx = len(prs.slides) - 1
+        slide = prs.slides[idx]
+
+        col_widths = [150.0, 150.0]
+        row_heights = [40.0, 40.0]
+        table = slide.shapes.add_table(50.0, 50.0, col_widths, row_heights)
+        table.name = "T"
+
+        short_text = "Hello world"
+        result = edit_table_cell(
+            prs, idx, "T", row_idx=0, col_idx=0,
+            new_text=short_text, char_limit=100
+        )
+        assert result["status"] == "ok"
+        assert result.get("truncated") is False
+
+    def test_edit_table_cell_no_limit_arg(self):
+        """char_limit is optional — old callers without it still work."""
+        prs = slides.Presentation()
+        layout = prs.masters[0].layout_slides[0]
+        prs.slides.insert_empty_slide(len(prs.slides), layout)
+        idx = len(prs.slides) - 1
+        slide = prs.slides[idx]
+
+        table = slide.shapes.add_table(50.0, 50.0, [150.0], [40.0])
+        table.name = "T"
+        result = edit_table_cell(prs, idx, "T", 0, 0, "test")
+        assert result["status"] == "ok"
+        assert result.get("truncated") is False
+
+
+class TestTableFitChecks:
+    """fit_tables_to_slide post-write safety net."""
+
+    def test_fits_already_returns_no_shrinkage(self):
+        """A table well within slide bounds is untouched."""
+        prs = slides.Presentation()
+        layout = prs.masters[0].layout_slides[0]
+        prs.slides.insert_empty_slide(len(prs.slides), layout)
+        idx = len(prs.slides) - 1
+        slide = prs.slides[idx]
+
+        # Small table, fits easily
+        table = slide.shapes.add_table(50.0, 50.0, [200.0], [30.0, 30.0])
+        table.name = "SmallTable"
+
+        result = fit_tables_to_slide(prs, idx)
+        assert result["status"] == "ok"
+        assert result["shrunk"] == []
+        assert result["overflow_remaining"] == []
+
+    def test_overflowing_table_triggers_shrink(self):
+        """A table that overflows gets entries in shrunk list."""
+        prs = slides.Presentation()
+        layout = prs.masters[0].layout_slides[0]
+        prs.slides.insert_empty_slide(len(prs.slides), layout)
+        idx = len(prs.slides) - 1
+        slide = prs.slides[idx]
+
+        # Slide is typically 540pt or 590pt tall. Build a table with
+        # row heights that sum well past that.
+        slide_h = prs.slide_size.size.height
+        # Start near the top, make rows huge
+        table = slide.shapes.add_table(
+            50.0, 30.0,
+            [400.0],
+            [float(slide_h), float(slide_h)]  # 2 rows each = slide_h tall
+        )
+        table.name = "HugeTable"
+
+        # Write substantial text so rows actually take up their minimal_height
+        try:
+            for r in range(2):
+                cell = table.rows[r][0]
+                tf = cell.text_frame
+                if tf.paragraphs.count > 0 and tf.paragraphs[0].portions.count > 0:
+                    tf.paragraphs[0].portions[0].text = "Content " * 20
+        except Exception:
+            pass
+
+        result = fit_tables_to_slide(prs, idx)
+        assert result["status"] == "ok"
+        # Either shrunk or overflow_remaining should have entries
+        # (depending on whether Aspose recomputed row heights after shrink)
+        assert (len(result["shrunk"]) > 0 or
+                len(result["overflow_remaining"]) > 0)
+
+    def test_invalid_slide_index(self):
+        prs = slides.Presentation()
+        result = fit_tables_to_slide(prs, 999)
         assert result["status"] == "error"

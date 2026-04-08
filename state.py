@@ -287,6 +287,33 @@ def extract_shape(shape) -> dict | None:
             else:
                 base["cell_char_limit"] = 50
 
+            # Compute per-row char limits. Bullet/merged rows typically
+            # span the entire table width, so we use the full table width
+            # as a safe upper bound. Non-merged rows use col 0's width as
+            # a conservative estimate.
+            row_char_limits = []
+            try:
+                table_w = shape.width
+                for row_idx in range(len(table.rows)):
+                    row_h = table.rows[row_idx].height
+                    # Determine if this row is merged (bullet row)
+                    is_merged_row = False
+                    try:
+                        row_cells = base["rows"][row_idx]
+                        is_merged_row = all(
+                            c.get("is_merged", False) for c in row_cells
+                        )
+                    except Exception:
+                        pass
+                    effective_w = table_w if is_merged_row else (
+                        table.columns[0].width if len(table.columns) > 0 else table_w
+                    )
+                    row_char_limits.append(estimate_char_limit(effective_w, row_h))
+            except Exception:
+                pass
+            if row_char_limits:
+                base["row_char_limits"] = row_char_limits
+
             # Detect logical sections (numbered items spanning multiple rows)
             sections = _detect_table_sections(base)
             if sections:
@@ -818,6 +845,8 @@ def compact_state(state: dict, max_text_chars: int = 500) -> dict:
                     compact_shape["row_overlays"] = shape["row_overlays"]
                 if shape.get("sections"):
                     compact_shape["sections"] = shape["sections"]
+                if shape.get("row_char_limits"):
+                    compact_shape["row_char_limits"] = shape["row_char_limits"]
                 cs["shapes"].append(compact_shape)
 
             elif s_type == "chart":

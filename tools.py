@@ -907,10 +907,15 @@ def edit_paragraph(prs, slide_idx: int, shape_name: str, para_idx: int,
 
 
 def edit_table_cell(prs, slide_idx: int, shape_name: str, row_idx: int,
-                    col_idx: int, new_text: str) -> dict:
+                    col_idx: int, new_text: str,
+                    char_limit: int = None) -> dict:
     """
     Full rewrite of a single table cell in an EXISTING table.
     Preserves cell formatting by only modifying .text.
+
+    If char_limit is provided and new_text exceeds it, the text is
+    truncated via _truncate_to_fit before writing. This prevents the
+    cell from auto-growing the row height past slide bounds.
     """
     if slide_idx < 0 or slide_idx >= len(prs.slides):
         return {"status": "error", "message": f"Slide index {slide_idx} out of range"}
@@ -933,27 +938,38 @@ def edit_table_cell(prs, slide_idx: int, shape_name: str, row_idx: int,
     except Exception:
         pass
 
+    # Truncate if over char_limit
+    truncated = False
+    text_to_write = str(new_text)
+    if char_limit is not None and char_limit > 0 and len(text_to_write) > char_limit:
+        text_to_write = _truncate_to_fit(text_to_write, char_limit)
+        truncated = True
+
     tf = _safe_text_frame(cell)
     if tf and tf.paragraphs.count > 0:
         para = tf.paragraphs[0]
         if para.portions.count > 0:
-            para.portions[0].text = str(new_text)
+            para.portions[0].text = text_to_write
             for i in range(1, para.portions.count):
                 para.portions[i].text = ""
         else:
             portion = slides.Portion()
-            portion.text = str(new_text)
+            portion.text = text_to_write
             para.portions.add(portion)
 
     return {"status": "ok", "slide_idx": slide_idx,
+            "truncated": truncated,
             "shape": shape_name, "cell": [row_idx, col_idx]}
 
 
 def edit_table_run(prs, slide_idx: int, shape_name: str, row_idx: int,
                    col_idx: int, para_idx: int, run_match: str,
-                   new_text: str) -> dict:
+                   new_text: str, char_limit: int = None) -> dict:
     """
     Targeted replacement of a single run within a table cell.
+
+    If char_limit is provided and new_text exceeds it, the text is
+    truncated before writing.
     """
     if slide_idx < 0 or slide_idx >= len(prs.slides):
         return {"status": "error", "message": f"Slide index {slide_idx} out of range"}
@@ -978,14 +994,21 @@ def edit_table_run(prs, slide_idx: int, shape_name: str, row_idx: int,
         return {"status": "error",
                 "message": f"Paragraph {para_idx} out of range in cell [{row_idx},{col_idx}]"}
 
+    # Truncate if over char_limit
+    truncated = False
+    text_to_write = str(new_text)
+    if char_limit is not None and char_limit > 0 and len(text_to_write) > char_limit:
+        text_to_write = _truncate_to_fit(text_to_write, char_limit)
+        truncated = True
+
     para = tf.paragraphs[para_idx]
     normalized_match = _normalize(run_match)
     for portion in para.portions:
         if _normalize(portion.text) == normalized_match:
-            portion.text = new_text
+            portion.text = text_to_write
             return {"status": "ok", "slide_idx": slide_idx,
                     "shape": shape_name, "cell": [row_idx, col_idx],
-                    "matched": run_match}
+                    "matched": run_match, "truncated": truncated}
 
     return {"status": "error",
             "message": f"No run matching '{run_match}' in cell [{row_idx},{col_idx}]"}
@@ -1581,6 +1604,175 @@ def swap_table_sections(
         "rows_swapped": len(rows_a),
         "overlays_moved": moved_names,
         "cross_slide": cross_slide,
+    }
+
+
+def fit_tables_to_slide(prs, slide_idx: int,
+                        bottom_margin: float = 20.0,
+                        min_font_height: float = 8.0,
+                        max_iterations: int = 25) -> dict:
+    """
+    Post-write safety net: ensure no table on the given slide overflows
+    the slide bottom by iteratively shrinking fonts in the tallest rows.
+
+    Strategy:
+      1. For each table, compute table.y + sum(row_heights)
+      2. If it exceeds (slide_height - bottom_margin), enter a shrink loop
+      3. Each iteration: find the tallest row, reduce all portion font
+         heights in that row by 7% (x0.93)
+      4. Stop when fits or fonts hit min_font_height floor
+      5. Returns a report of what was shrunk
+
+    This is a defensive measure — primary enforcement should be pre-write
+    truncation via char_limit. This catches cases the LLM missed.
+    """
+    if slide_idx < 0 or slide_idx >= len(prs.slides):
+        return {"status": "error",
+                "message": f"Slide index {slide_idx} out of range"}
+
+    try:
+        slide_h = prs.slide_size.size.height
+    except Exception:
+        return {"status": "error",
+                "message": "Could not read slide size"}
+    slide = prs.slides[slide_idx]
+    usable_h = slide_h - bottom_margin
+
+    shrunk_tables = []
+    overflow_remaining = []
+
+    for shape in slide.shapes:
+        if not isinstance(shape, slides.Table):
+            continue
+        table = shape
+        try:
+            table_y = table.y
+            n_rows = len(table.rows)
+        except Exception:
+            continue
+        if n_rows == 0:
+            continue
+
+        def total_height():
+            try:
+                return sum(table.rows[r].height for r in range(n_rows))
+            except Exception:
+                return 0
+
+        initial_total = total_height()
+        initial_bottom = table_y + initial_total
+        if initial_bottom <= usable_h:
+            continue  # Already fits
+
+        shrink_log = []
+        iteration = 0
+        hit_floor = False
+        while iteration < max_iterations:
+            current_total = total_height()
+            current_bottom = table_y + current_total
+            if current_bottom <= usable_h:
+                break
+
+            # Find the tallest row index
+            try:
+                heights = [table.rows[r].height for r in range(n_rows)]
+            except Exception:
+                break
+            tallest_r = heights.index(max(heights))
+
+            # Shrink all portion font heights in the tallest row by 7%
+            row_shrunk_any = False
+            all_below_floor = True
+            try:
+                row = table.rows[tallest_r]
+            except Exception:
+                break
+            try:
+                n_cols = len(table.columns)
+            except Exception:
+                break
+            for col_idx in range(n_cols):
+                try:
+                    cell = row[col_idx]
+                except Exception:
+                    continue
+                tf = _safe_text_frame(cell)
+                if tf is None:
+                    continue
+                try:
+                    paragraphs = tf.paragraphs
+                except Exception:
+                    continue
+                for para in paragraphs:
+                    try:
+                        portions = para.portions
+                    except Exception:
+                        continue
+                    for portion in portions:
+                        try:
+                            pf = portion.portion_format
+                        except Exception:
+                            continue
+                        cur_fh = _safe_font_height(pf)
+                        if cur_fh <= 0:
+                            cur_fh = 10.0  # default assumption
+                        new_fh = cur_fh * 0.93
+                        if new_fh < min_font_height:
+                            # Floor hit for this portion, set to min and
+                            # keep checking other portions
+                            new_fh = min_font_height
+                            if cur_fh > min_font_height:
+                                try:
+                                    pf.font_height = new_fh
+                                    row_shrunk_any = True
+                                except Exception:
+                                    pass
+                        else:
+                            try:
+                                pf.font_height = new_fh
+                                row_shrunk_any = True
+                                all_below_floor = False
+                            except Exception:
+                                pass
+
+            if not row_shrunk_any:
+                hit_floor = True
+                break
+
+            shrink_log.append({"row": tallest_r, "iteration": iteration})
+            iteration += 1
+
+            if all_below_floor:
+                hit_floor = True
+                break
+
+        final_total = total_height()
+        final_bottom = table_y + final_total
+        try:
+            table_name = table.name
+        except Exception:
+            table_name = "unknown"
+
+        if shrink_log:
+            shrunk_tables.append({
+                "name": table_name,
+                "iterations": len(shrink_log),
+                "initial_bottom": initial_bottom,
+                "final_bottom": final_bottom,
+                "slide_limit": usable_h,
+            })
+        if final_bottom > usable_h:
+            overflow_remaining.append({
+                "name": table_name,
+                "overflow_pt": final_bottom - usable_h,
+                "hit_floor": hit_floor,
+            })
+
+    return {
+        "status": "ok",
+        "slide_idx": slide_idx,
+        "shrunk": shrunk_tables,
+        "overflow_remaining": overflow_remaining,
     }
 
 
