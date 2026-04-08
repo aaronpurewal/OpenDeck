@@ -252,9 +252,11 @@ def execute_plan(plan: dict, prs, label_list: list) -> dict:
             args = {k: v for k, v in step.items() if k not in skip_keys}
             args["slide_idx"] = slide_idx
 
-            # Only pass char_limit to tools that accept it
-            if action not in ("edit_table_cell", "edit_table_run",
-                              "fill_placeholder", "fill_table"):
+            # Only pass char_limit to tools whose signatures accept it.
+            # fill_placeholder/fill_table do NOT accept char_limit yet;
+            # passing it would TypeError. Only edit_table_cell and
+            # edit_table_run take it currently.
+            if action not in ("edit_table_cell", "edit_table_run"):
                 args.pop("char_limit", None)
 
             # Validate required args for table operations

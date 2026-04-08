@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import aspose.slides as slides
 from state import harvest_deck
 from validation import smoke_test
-from pipeline import _remap_content_shapes
+from pipeline import _remap_content_shapes, _inject_table_char_limits
 
 FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 SAMPLE_DECK = os.path.join(FIXTURE_DIR, "sample_deck.pptx")
@@ -186,6 +186,94 @@ class TestRemapContentShapes:
         assert content["content_updates"][0]["shape_name"] == "object 2"
         assert content["content_updates"][1]["shape_name"] == "object 3"
         assert content["content_updates"][2]["shape_name"] == "object 4"
+
+
+class TestInjectTableCharLimits:
+    """Verify that _inject_table_char_limits reads from deck_state and
+    injects per-row char_limits into edit_table_cell steps."""
+
+    def _build_state(self):
+        return {
+            "label_list": ["slide_0", "slide_1"],
+            "slides": [
+                {"label": "slide_0", "shapes": [
+                    {"name": "Table 1", "type": "table",
+                     "row_char_limits": [50, 100, 200, 150]},
+                ]},
+                {"label": "slide_1", "shapes": [
+                    {"name": "Risks", "type": "table",
+                     "row_char_limits": [40, 250]},
+                ]},
+            ],
+        }
+
+    def test_injects_when_missing(self):
+        state = self._build_state()
+        updates = [{
+            "action": "edit_table_cell", "slide_label": "slide_0",
+            "shape_name": "Table 1", "row_idx": 2, "col_idx": 0,
+            "new_text": "hello",
+        }]
+        n = _inject_table_char_limits(updates, state)
+        assert n == 1
+        assert updates[0]["char_limit"] == 200
+
+    def test_respects_existing_limit(self):
+        state = self._build_state()
+        updates = [{
+            "action": "edit_table_cell", "slide_label": "slide_0",
+            "shape_name": "Table 1", "row_idx": 2, "col_idx": 0,
+            "char_limit": 999, "new_text": "x",
+        }]
+        n = _inject_table_char_limits(updates, state)
+        assert n == 0
+        assert updates[0]["char_limit"] == 999
+
+    def test_ignores_non_table_actions(self):
+        state = self._build_state()
+        updates = [
+            {"action": "fill_placeholder", "slide_label": "slide_0",
+             "shape_name": "Title 1", "text": "Hi"},
+            {"action": "swap_table_sections", "slide_label": "slide_0",
+             "shape_name_a": "Table 1", "section_idx_a": 0,
+             "slide_label_b": "slide_0", "shape_name_b": "Table 1",
+             "section_idx_b": 1},
+        ]
+        n = _inject_table_char_limits(updates, state)
+        assert n == 0
+
+    def test_handles_missing_shape(self):
+        state = self._build_state()
+        updates = [{
+            "action": "edit_table_cell", "slide_label": "slide_0",
+            "shape_name": "NonexistentTable", "row_idx": 0, "col_idx": 0,
+            "new_text": "x",
+        }]
+        n = _inject_table_char_limits(updates, state)
+        assert n == 0
+        assert "char_limit" not in updates[0]
+
+    def test_handles_row_idx_out_of_range(self):
+        state = self._build_state()
+        updates = [{
+            "action": "edit_table_cell", "slide_label": "slide_0",
+            "shape_name": "Table 1", "row_idx": 99, "col_idx": 0,
+            "new_text": "x",
+        }]
+        n = _inject_table_char_limits(updates, state)
+        assert n == 0
+
+    def test_edit_table_run_also_gets_injection(self):
+        state = self._build_state()
+        updates = [{
+            "action": "edit_table_run", "slide_label": "slide_1",
+            "shape_name": "Risks", "row_idx": 1, "col_idx": 0,
+            "para_idx": 0, "run_match": "old",
+            "new_text": "x" * 500,
+        }]
+        n = _inject_table_char_limits(updates, state)
+        assert n == 1
+        assert updates[0]["char_limit"] == 250
 
 
 @pytest.mark.skipif(

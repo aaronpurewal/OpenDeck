@@ -152,6 +152,52 @@ def _remap_manifest_shapes(plan: dict, post_state: dict, cloned_labels: set):
             entry["shape_name"] = matching_shapes[idx]
 
 
+def _inject_table_char_limits(content_updates: list, deck_state: dict) -> int:
+    """
+    Pre-execution safety: for every edit_table_cell / edit_table_run step
+    that doesn't already have a char_limit, look up the target row's
+    limit from the harvested deck_state and inject it.
+
+    This guarantees content gets truncated at write time even when the
+    LLM forgot to pass char_limit — which is the primary overflow
+    defense for consulting-grade output.
+
+    Returns the number of steps that had a limit injected (for logging).
+    """
+    injected = 0
+    if not content_updates or not deck_state:
+        return 0
+    label_list = deck_state.get("label_list", [])
+    slides_data = deck_state.get("slides", [])
+    for step in content_updates:
+        action = step.get("action")
+        if action not in ("edit_table_cell", "edit_table_run"):
+            continue
+        existing = step.get("char_limit")
+        if existing and existing > 0:
+            continue  # LLM provided one; respect it
+        slide_label = step.get("slide_label")
+        shape_name = step.get("shape_name")
+        row_idx = step.get("row_idx")
+        if row_idx is None or not slide_label or not shape_name:
+            continue
+        try:
+            s_idx = label_list.index(slide_label)
+        except ValueError:
+            continue
+        if s_idx < 0 or s_idx >= len(slides_data):
+            continue
+        for shape in slides_data[s_idx].get("shapes", []):
+            if (shape.get("name") == shape_name
+                    and shape.get("type") == "table"):
+                limits = shape.get("row_char_limits", [])
+                if 0 <= row_idx < len(limits):
+                    step["char_limit"] = limits[row_idx]
+                    injected += 1
+                break
+    return injected
+
+
 def step1_harvest(input_path: str) -> tuple:
     """
     Load the deck and harvest its state.
@@ -268,10 +314,26 @@ def step3_execute(plan: dict, deck_state: dict, prs,
     if cloned_labels:
         _remap_content_shapes(content, plan, post_struct_state, cloned_labels)
 
+    # --- Auto-inject char_limit on table edits ---
+    # Primary overflow defense: every edit_table_cell/run gets the
+    # target row's char_limit injected from harvested state if the LLM
+    # didn't pass one. This guarantees pre-write truncation so tables
+    # don't grow past their original geometry.
+    content_updates_list = content.get("content_updates", [])
+    injected_count = _inject_table_char_limits(
+        content_updates_list, post_struct_state
+    )
+    if injected_count > 0:
+        log.append({
+            "action": "_inject_table_char_limits",
+            "status": "ok",
+            "message": f"Injected char_limit on {injected_count} table edits",
+        })
+
     # --- Phase C: Execute content updates (Aspose, instant) ---
     content_plan = {
         "structural_changes": [],
-        "content_updates": content.get("content_updates", [])
+        "content_updates": content_updates_list,
     }
     content_result = execute_plan(content_plan, prs, label_list)
     log.extend(content_result["log"])

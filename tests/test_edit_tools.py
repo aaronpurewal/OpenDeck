@@ -593,41 +593,58 @@ class TestTableFitChecks:
         assert result["shrunk"] == []
         assert result["overflow_remaining"] == []
 
-    def test_overflowing_table_triggers_shrink(self):
-        """A table that overflows gets entries in shrunk list."""
+    def test_large_overflow_returns_warning_not_shrinkage(self):
+        """Hard overflow (>5pt) should be reported as warning, not
+        auto-fixed. The table must stay at its original position and
+        height — consulting decks never auto-manipulate table geometry."""
         prs = slides.Presentation()
         layout = prs.masters[0].layout_slides[0]
         prs.slides.insert_empty_slide(len(prs.slides), layout)
         idx = len(prs.slides) - 1
         slide = prs.slides[idx]
 
-        # Slide is typically 540pt or 590pt tall. Build a table with
-        # row heights that sum well past that.
         slide_h = prs.slide_size.size.height
-        # Start near the top, make rows huge
         table = slide.shapes.add_table(
             50.0, 30.0,
             [400.0],
-            [float(slide_h), float(slide_h)]  # 2 rows each = slide_h tall
+            [float(slide_h), float(slide_h)]
         )
         table.name = "HugeTable"
 
-        # Write substantial text so rows actually take up their minimal_height
-        try:
-            for r in range(2):
-                cell = table.rows[r][0]
-                tf = cell.text_frame
-                if tf.paragraphs.count > 0 and tf.paragraphs[0].portions.count > 0:
-                    tf.paragraphs[0].portions[0].text = "Content " * 20
-        except Exception:
-            pass
+        original_y = table.y
+        original_height = table.height
 
         result = fit_tables_to_slide(prs, idx)
         assert result["status"] == "ok"
-        # Either shrunk or overflow_remaining should have entries
-        # (depending on whether Aspose recomputed row heights after shrink)
-        assert (len(result["shrunk"]) > 0 or
-                len(result["overflow_remaining"]) > 0)
+        # Should warn about hard overflow, NOT shrink
+        assert len(result["overflow_remaining"]) > 0
+        warning = result["overflow_remaining"][0]
+        assert "hard overflow" in warning.get("reason", "").lower()
+        # Table geometry unchanged
+        assert abs(table.y - original_y) < 0.01
+        assert abs(table.height - original_height) < 0.01
+
+    def test_table_y_never_moves(self):
+        """Verify the fit function never touches table.y regardless of
+        how large the overflow is. Moving the table would risk colliding
+        with title/header chrome."""
+        prs = slides.Presentation()
+        layout = prs.masters[0].layout_slides[0]
+        prs.slides.insert_empty_slide(len(prs.slides), layout)
+        idx = len(prs.slides) - 1
+        slide = prs.slides[idx]
+
+        slide_h = prs.slide_size.size.height
+        # Create a table starting at y=100 with a huge overflow
+        table = slide.shapes.add_table(50.0, 100.0, [400.0],
+                                        [float(slide_h)])
+        table.name = "OverflowTable"
+        original_y = table.y
+        assert original_y == 100.0
+
+        fit_tables_to_slide(prs, idx)
+        # y must be exactly the same after fit
+        assert abs(table.y - original_y) < 0.01
 
     def test_invalid_slide_index(self):
         prs = slides.Presentation()

@@ -287,28 +287,59 @@ def extract_shape(shape) -> dict | None:
             else:
                 base["cell_char_limit"] = 50
 
-            # Compute per-row char limits. Bullet/merged rows typically
-            # span the entire table width, so we use the full table width
-            # as a safe upper bound. Non-merged rows use col 0's width as
-            # a conservative estimate.
+            # Compute per-row char limits. The target is to prevent
+            # rows from growing beyond their ORIGINAL design-intended
+            # size. We use the minimum of two bounds:
+            #   (a) A formula-based estimate from row geometry
+            #   (b) The existing cell content length + 15% growth
+            #       headroom (so small edits can still add a few words)
+            # Whichever is smaller wins. This guarantees rows don't
+            # auto-grow past where the designer intended.
+            TABLE_SAFETY_MARGIN = 0.50
+            CONTENT_GROWTH_HEADROOM = 1.15
             row_char_limits = []
             try:
                 table_w = shape.width
+                avg_char_w = DEFAULT_FONT_SIZE_PT * 0.6
+                line_h = DEFAULT_FONT_SIZE_PT * DEFAULT_LINE_SPACING
                 for row_idx in range(len(table.rows)):
                     row_h = table.rows[row_idx].height
-                    # Determine if this row is merged (bullet row)
                     is_merged_row = False
+                    existing_content_len = 0
                     try:
                         row_cells = base["rows"][row_idx]
                         is_merged_row = all(
                             c.get("is_merged", False) for c in row_cells
                         )
+                        # Longest cell text in this row (merged rows
+                        # repeat the same text across cells; non-merged
+                        # rows have distinct per-column content)
+                        for c in row_cells:
+                            t = c.get("text", "") or ""
+                            if len(t) > existing_content_len:
+                                existing_content_len = len(t)
                     except Exception:
                         pass
                     effective_w = table_w if is_merged_row else (
                         table.columns[0].width if len(table.columns) > 0 else table_w
                     )
-                    row_char_limits.append(estimate_char_limit(effective_w, row_h))
+                    # Formula bound
+                    formula_limit = 50
+                    if avg_char_w > 0 and line_h > 0:
+                        chars_per_line = int(effective_w / avg_char_w)
+                        num_lines = int(row_h / line_h)
+                        formula_limit = max(
+                            int(chars_per_line * num_lines * TABLE_SAFETY_MARGIN),
+                            1
+                        )
+                    # Content-based bound (existing + 15% headroom)
+                    # Only apply if cell has meaningful content
+                    if existing_content_len >= 20:
+                        content_limit = int(existing_content_len * CONTENT_GROWTH_HEADROOM)
+                        row_char_limits.append(min(formula_limit, content_limit))
+                    else:
+                        # Row is mostly empty (header row, label)
+                        row_char_limits.append(formula_limit)
             except Exception:
                 pass
             if row_char_limits:

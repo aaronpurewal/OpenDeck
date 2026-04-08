@@ -262,24 +262,25 @@ the system truncates overflow, but sparse slides look bad. \
 For titles and short labels, be concise. \
 Count your characters before finalizing.
 
-CRITICAL -- TABLE ROW CHAR LIMITS:
+CRITICAL -- TABLE ROW CHAR LIMITS ARE HARD CAPS (ENFORCED AUTOMATICALLY):
 Tables expose a `row_char_limits` array in the document state with the \
-per-row char capacity. When using edit_table_cell or edit_table_run, your \
-new_text MUST fit within the target row's char_limit. Merged bullet rows \
-(the ones that span all columns with paragraph content) have HARD caps \
-derived from table width times row height. Exceeding these causes the \
-table to auto-grow row heights and push past the slide bottom.
+per-row char capacity. These are HARD caps and will be enforced at write \
+time whether you pass `char_limit` or not -- the system automatically \
+injects the cap from harvested state before writing. Content exceeding \
+the cap will be TRUNCATED with ellipsis.
 
-Always pass the `char_limit` arg in edit_table_cell / edit_table_run so \
-the system can enforce the cap as a backstop. Example:
+This means: plan content to fit within the target row's char_limit. If \
+your content would exceed it, write less content or split across multiple \
+rows. Do NOT rely on "writing long and letting the system trim" -- \
+truncation happens at word boundaries and may cut off mid-sentence.
 
-  {{"action": "edit_table_cell", "slide_label": "slide_0", \
-     "shape_name": "Table 4", "row_idx": 6, "col_idx": 0, \
-     "char_limit": 525, "new_text": "..."}}
+When planning swap_table_sections, verify both sections' content will fit \
+in each other's row budgets AFTER the swap. Content at the target row \
+that exceeds its char_limit will be truncated post-swap.
 
-For swap_table_sections, the moved content must also fit within the target \
-section's row budgets. If your content would exceed the target row's \
-char_limit, shorten it BEFORE planning the swap.
+Consulting-grade rule: tables must never overflow their slide boundaries. \
+If needed content doesn't fit, prefer splitting into a continuation slide \
+over cramming everything into one table.
 
 YOUR OUTPUT must be a JSON object with a "content_updates" array. Each item \
 corresponds to an item in the manifest, with the actual text/data added:

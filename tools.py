@@ -1609,22 +1609,24 @@ def swap_table_sections(
 
 def fit_tables_to_slide(prs, slide_idx: int,
                         bottom_margin: float = 5.0,
-                        top_margin: float = 30.0) -> dict:
+                        rounding_tolerance: float = 5.0) -> dict:
     """
-    Post-write safety net: ensure no table on the given slide overflows
-    the slide bottom.
+    Conservative post-write safety net for table overflow.
 
-    Uses direct table geometry setters in Aspose:
-      1. Try shrinking table.height by the overflow amount (Aspose
-         proportionally redistributes the height across rows)
-      2. If the table can't shrink enough (Aspose refuses), try moving
-         table.y upward to reclaim bottom space
+    Philosophy: in consulting decks, the correct answer for overflow is
+    to write less content, NOT to silently manipulate table geometry.
+    This function only absorbs tiny rounding-error overflows (up to
+    `rounding_tolerance` pt) by nudging `table.height` downward.
+    Anything larger is reported as a hard overflow warning and the
+    table is left untouched.
 
-    Both `table.y` and `table.height` setters work immediately and
-    persist to the saved file. No iteration, no save/reload, no font
-    twiddling. This replaces earlier failed attempts at using
-    `row.minimal_height` (which is only a floor, not a cap) and font
-    shrinking (which doesn't trigger row.height recomputation).
+    Explicitly does NOT:
+      - Move `table.y` (would invade title / header chrome)
+      - Shrink fonts (doesn't trigger Aspose row recomputation anyway)
+      - Touch row heights or autofit (unreliable)
+
+    Pre-write char_limit enforcement is the real defense. This is the
+    last-mile safety net for rounding drift only.
     """
     if slide_idx < 0 or slide_idx >= len(prs.slides):
         return {"status": "error",
@@ -1662,47 +1664,32 @@ def fit_tables_to_slide(prs, slide_idx: int,
 
         overflow = initial_bottom - usable_h
 
-        # Strategy 1: shrink table.height by the overflow amount.
-        # Aspose will proportionally redistribute across rows.
-        # Don't shrink below 60% of original height (sanity cap).
-        min_allowed_height = max(table_h * 0.6, 100.0)
-        target_height = max(table_h - overflow - 2.0, min_allowed_height)
+        if overflow > rounding_tolerance:
+            # Hard overflow. Do NOT manipulate geometry — surface a
+            # warning so the user can regenerate with shorter content.
+            overflow_remaining.append({
+                "name": table_name,
+                "overflow_pt": overflow,
+                "reason": (f"hard overflow: content exceeds cell capacity by "
+                           f"{overflow:.0f}pt. Regenerate with shorter bullets "
+                           f"or split across a continuation slide."),
+            })
+            continue
+
+        # Rounding overflow (≤ tolerance): nudge table.height down
+        target_height = table_h - overflow - 1.0
         height_shrunk = 0.0
         try:
             table.height = target_height
-            # Re-read actual height Aspose assigned
             new_h = table.height
             height_shrunk = table_h - new_h
         except Exception:
             pass
 
-        # Re-compute bottom after height shrink
         try:
-            cur_h = table.height
+            final_bottom = table.y + table.height
         except Exception:
-            cur_h = table_h
-        cur_bottom = table_y + cur_h
-        remaining_overflow = cur_bottom - usable_h
-
-        # Strategy 2: if still overflowing, move the table up
-        y_shifted = 0.0
-        if remaining_overflow > 0:
-            max_shift = table_y - top_margin
-            if max_shift > 0:
-                shift = min(remaining_overflow + 2.0, max_shift)
-                try:
-                    table.y = table_y - shift
-                    y_shifted = shift
-                except Exception:
-                    pass
-
-        # Final measurement
-        try:
-            final_y = table.y
-            final_h = table.height
-            final_bottom = final_y + final_h
-        except Exception:
-            final_bottom = cur_bottom
+            final_bottom = initial_bottom
 
         resized_tables.append({
             "name": table_name,
@@ -1710,15 +1697,15 @@ def fit_tables_to_slide(prs, slide_idx: int,
             "final_bottom": final_bottom,
             "slide_limit": usable_h,
             "height_shrunk": height_shrunk,
-            "y_shifted": y_shifted,
-            "rows_resized": 0,  # n/a in this implementation
+            "y_shifted": 0.0,
+            "rows_resized": 0,
         })
 
         if final_bottom > usable_h:
             overflow_remaining.append({
                 "name": table_name,
                 "overflow_pt": final_bottom - usable_h,
-                "reason": "could not reduce table geometry enough",
+                "reason": "rounding absorb failed",
             })
 
     return {
