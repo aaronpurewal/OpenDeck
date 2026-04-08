@@ -8,9 +8,18 @@ LLM-powered PowerPoint editing that **perfectly matches your slide master**. Giv
 
 A real test on a Stone Point Credit investment considerations slide. Four simultaneous edits plus a section swap, all from one natural language instruction.
 
-### Input deck
+### Before and After
 
-<img width="820" alt="Input — Stone Point Credit risks slide" src="https://github.com/user-attachments/assets/00d495b9-3897-4307-8c79-e02169de46c0" />
+<table>
+<tr>
+<td width="50%"><b>Input</b></td>
+<td width="50%"><b>Output</b></td>
+</tr>
+<tr>
+<td><img alt="Input — Stone Point Credit risks slide" src="https://github.com/user-attachments/assets/00d495b9-3897-4307-8c79-e02169de46c0" /></td>
+<td><img alt="Output — edits applied with formatting preserved" src="https://github.com/user-attachments/assets/517a028b-d87e-4e28-9757-65d8beb0a3b8" /></td>
+</tr>
+</table>
 
 ### Instruction
 
@@ -26,9 +35,7 @@ A real test on a Stone Point Credit investment considerations slide. Four simult
 >
 > Pls fix thx
 
-### Output deck
-
-<img width="820" alt="Output — edits applied with formatting preserved" src="https://github.com/user-attachments/assets/517a028b-d87e-4e28-9757-65d8beb0a3b8" />
+### Execution trace
 
 <img width="1509" alt="Execution log showing plan and operations" src="https://github.com/user-attachments/assets/4a6a1d2a-7b5e-4614-b584-f2d2d54c10a8" />
 
