@@ -299,16 +299,20 @@ def step3_execute(plan: dict, deck_state: dict, prs,
             continue
         fit_result = fit_tables_to_slide(
             prs, s_idx,
-            bottom_margin=5.0,
-            min_row_height=24.0
+            bottom_margin=5.0
         )
         if fit_result.get("shrunk"):
             for entry in fit_result["shrunk"]:
+                parts = []
+                if entry.get("height_shrunk", 0) > 0.5:
+                    parts.append(f"shrunk {entry['height_shrunk']:.0f}pt")
+                if entry.get("y_shifted", 0) > 0.5:
+                    parts.append(f"shifted up {entry['y_shifted']:.0f}pt")
+                detail = ", ".join(parts) if parts else "no change"
                 fit_warnings.append(
-                    f"{lbl} {entry.get('name', '?')}: resized "
-                    f"{entry.get('rows_resized', 0)} rows, "
-                    f"{entry.get('initial_bottom', 0):.0f}→"
-                    f"{entry.get('final_bottom', 0):.0f}pt"
+                    f"{lbl} {entry.get('name', '?')}: {detail} "
+                    f"({entry.get('initial_bottom', 0):.0f}→"
+                    f"{entry.get('final_bottom', 0):.0f}pt)"
                 )
         if fit_result.get("overflow_remaining"):
             for entry in fit_result["overflow_remaining"]:

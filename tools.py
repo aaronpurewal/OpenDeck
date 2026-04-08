@@ -1609,26 +1609,22 @@ def swap_table_sections(
 
 def fit_tables_to_slide(prs, slide_idx: int,
                         bottom_margin: float = 5.0,
-                        min_row_height: float = 24.0) -> dict:
+                        top_margin: float = 30.0) -> dict:
     """
     Post-write safety net: ensure no table on the given slide overflows
-    the slide bottom by reducing row heights on bullet rows.
+    the slide bottom.
 
-    Strategy (the correct Aspose approach):
-      1. For each table, compute table.y + sum(row_heights)
-      2. If overflow, identify bullet rows (merged rows or rows > 40pt
-         excluding the header row)
-      3. Enable text_frame autofit_type=NORMAL on all cells in bullet
-         rows so Aspose auto-shrinks text to fit smaller row heights
-      4. Set `minimal_height` on each bullet row to a reduced target
-         height. Aspose honors this when content can fit; otherwise
-         clamps to the minimum height the content needs at the auto-fit
-         font size
-      5. Row heights update immediately — no save/reload needed
+    Uses direct table geometry setters in Aspose:
+      1. Try shrinking table.height by the overflow amount (Aspose
+         proportionally redistributes the height across rows)
+      2. If the table can't shrink enough (Aspose refuses), try moving
+         table.y upward to reclaim bottom space
 
-    This replaces the older font-iteration approach which didn't work
-    because changing portion.font_height does not trigger row.height
-    recomputation in Aspose.
+    Both `table.y` and `table.height` setters work immediately and
+    persist to the saved file. No iteration, no save/reload, no font
+    twiddling. This replaces earlier failed attempts at using
+    `row.minimal_height` (which is only a floor, not a cap) and font
+    shrinking (which doesn't trigger row.height recomputation).
     """
     if slide_idx < 0 or slide_idx >= len(prs.slides):
         return {"status": "error",
@@ -1651,131 +1647,84 @@ def fit_tables_to_slide(prs, slide_idx: int,
         table = shape
         try:
             table_y = table.y
-            n_rows = len(table.rows)
-            n_cols = len(table.columns)
+            table_h = table.height
         except Exception:
             continue
-        if n_rows == 0 or n_cols == 0:
-            continue
-
-        def total_height():
-            try:
-                return sum(table.rows[r].height for r in range(n_rows))
-            except Exception:
-                return 0
-
-        initial_total = total_height()
-        initial_bottom = table_y + initial_total
-        if initial_bottom <= usable_h:
-            continue  # Already fits
-
-        # Identify bullet rows — rows where ALL cells are merged. These
-        # are the classic "bullet content spans all columns" rows in
-        # consulting tables. Header rows have unmerged cells per column
-        # so they are excluded.
-        bullet_rows = []
-        try:
-            for r in range(n_rows):
-                if r == 0:
-                    continue
-                row = table.rows[r]
-                all_merged = True
-                try:
-                    for c in range(n_cols):
-                        cell = row[c]
-                        if not cell.is_merged_cell:
-                            all_merged = False
-                            break
-                except Exception:
-                    all_merged = False
-                if all_merged:
-                    bullet_rows.append(r)
-        except Exception:
-            pass
 
         try:
             table_name = table.name
         except Exception:
             table_name = "unknown"
 
-        if not bullet_rows:
-            overflow_remaining.append({
-                "name": table_name,
-                "overflow_pt": initial_bottom - usable_h,
-                "reason": "no eligible bullet rows",
-            })
-            continue
+        initial_bottom = table_y + table_h
+        if initial_bottom <= usable_h:
+            continue  # Already fits
 
-        # Enable autofit on all bullet row cells so Aspose shrinks text
-        # to fit the cell when minimal_height is reduced.
-        for r in bullet_rows:
-            try:
-                row = table.rows[r]
-            except Exception:
-                continue
-            for col_idx in range(n_cols):
+        overflow = initial_bottom - usable_h
+
+        # Strategy 1: shrink table.height by the overflow amount.
+        # Aspose will proportionally redistribute across rows.
+        # Don't shrink below 60% of original height (sanity cap).
+        min_allowed_height = max(table_h * 0.6, 100.0)
+        target_height = max(table_h - overflow - 2.0, min_allowed_height)
+        height_shrunk = 0.0
+        try:
+            table.height = target_height
+            # Re-read actual height Aspose assigned
+            new_h = table.height
+            height_shrunk = table_h - new_h
+        except Exception:
+            pass
+
+        # Re-compute bottom after height shrink
+        try:
+            cur_h = table.height
+        except Exception:
+            cur_h = table_h
+        cur_bottom = table_y + cur_h
+        remaining_overflow = cur_bottom - usable_h
+
+        # Strategy 2: if still overflowing, move the table up
+        y_shifted = 0.0
+        if remaining_overflow > 0:
+            max_shift = table_y - top_margin
+            if max_shift > 0:
+                shift = min(remaining_overflow + 2.0, max_shift)
                 try:
-                    cell = row[col_idx]
-                except Exception:
-                    continue
-                try:
-                    tff = cell.text_frame.text_frame_format
-                    tff.autofit_type = slides.TextAutofitType.NORMAL
+                    table.y = table_y - shift
+                    y_shifted = shift
                 except Exception:
                     pass
 
-        # Compute how much we need to shave off total table height
-        overflow = initial_bottom - usable_h
-        # Sum current bullet row heights (our shrinkable budget)
+        # Final measurement
         try:
-            bullet_total = sum(table.rows[r].height for r in bullet_rows)
+            final_y = table.y
+            final_h = table.height
+            final_bottom = final_y + final_h
         except Exception:
-            continue
-
-        if bullet_total <= 0:
-            overflow_remaining.append({
-                "name": table_name,
-                "overflow_pt": overflow,
-                "reason": "bullet rows have no height",
-            })
-            continue
-
-        # Shrink each bullet row proportionally to its share of bullet_total
-        # Leave a 5pt safety buffer below usable_h
-        target_bullet_total = max(bullet_total - overflow - 5.0, n_rows * min_row_height)
-        shrink_ratio = target_bullet_total / bullet_total
-
-        for r in bullet_rows:
-            try:
-                current_h = table.rows[r].height
-                target_h = max(current_h * shrink_ratio, min_row_height)
-                table.rows[r].minimal_height = target_h
-            except Exception:
-                pass
-
-        # Read back what Aspose actually gave us
-        final_total = total_height()
-        final_bottom = table_y + final_total
+            final_bottom = cur_bottom
 
         resized_tables.append({
             "name": table_name,
             "initial_bottom": initial_bottom,
             "final_bottom": final_bottom,
             "slide_limit": usable_h,
-            "rows_resized": len(bullet_rows),
+            "height_shrunk": height_shrunk,
+            "y_shifted": y_shifted,
+            "rows_resized": 0,  # n/a in this implementation
         })
 
         if final_bottom > usable_h:
             overflow_remaining.append({
                 "name": table_name,
                 "overflow_pt": final_bottom - usable_h,
-                "reason": "content too long to fit in reduced rows",
+                "reason": "could not reduce table geometry enough",
             })
 
     return {
         "status": "ok",
         "slide_idx": slide_idx,
-        "shrunk": resized_tables,  # keep same key for backward compat with pipeline
+        "shrunk": resized_tables,
         "overflow_remaining": overflow_remaining,
     }
 
