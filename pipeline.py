@@ -305,16 +305,17 @@ def step3_execute(plan: dict, deck_state: dict, prs,
         if fit_result.get("shrunk"):
             for entry in fit_result["shrunk"]:
                 fit_warnings.append(
-                    f"{lbl} {entry['name']}: shrunk fonts "
-                    f"({entry['iterations']} iterations, "
-                    f"{entry['initial_bottom']:.0f}→{entry['final_bottom']:.0f}pt)"
+                    f"{lbl} {entry.get('name', '?')}: resized "
+                    f"{entry.get('rows_resized', 0)} rows, "
+                    f"{entry.get('initial_bottom', 0):.0f}→"
+                    f"{entry.get('final_bottom', 0):.0f}pt"
                 )
         if fit_result.get("overflow_remaining"):
             for entry in fit_result["overflow_remaining"]:
+                reason = entry.get("reason", "unknown")
                 fit_warnings.append(
-                    f"{lbl} {entry['name']}: still overflows by "
-                    f"{entry['overflow_pt']:.0f}pt "
-                    f"({'min font hit' if entry.get('hit_floor') else 'unknown'})"
+                    f"{lbl} {entry.get('name', '?')}: still overflows by "
+                    f"{entry.get('overflow_pt', 0):.0f}pt ({reason})"
                 )
 
     # --- Phase D: Validate ---
