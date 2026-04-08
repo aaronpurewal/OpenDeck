@@ -410,6 +410,7 @@ def _detect_table_sections(table_state: dict) -> list:
     if not rows or len(rows) < 2:
         return []
 
+    # --- Primary strategy: look for numbered prefix in col 0 ---
     header_indices = []
     for r, row in enumerate(rows):
         if not row:
@@ -420,6 +421,46 @@ def _detect_table_sections(table_state: dict) -> list:
             text = (first_cell.get("text") or "").strip()
         if text and _HEADER_ROW_PATTERN.match(text):
             header_indices.append(r)
+
+    # --- Fallback strategy: merge-pattern detection ---
+    # Many consulting tables don't prefix rows with (1), (2) etc. They use
+    # alternating rows where header rows are NOT merged (cells have their
+    # own content per column) and bullet rows ARE merged across all cols.
+    # If we find such a pattern, header rows are the unmerged rows between
+    # the leading generic header (row 0) and the end.
+    if len(header_indices) < 2:
+        merge_pattern = []
+        for r, row in enumerate(rows):
+            if not row:
+                merge_pattern.append(None)
+                continue
+            all_merged = all(
+                (c.get("is_merged") if isinstance(c, dict) else False)
+                for c in row
+            )
+            merge_pattern.append("M" if all_merged else ".")
+
+        # Identify non-merged rows with non-empty text (candidates for headers).
+        # A candidate header is an unmerged row whose first-col text is
+        # non-trivial AND whose immediate next row is fully merged.
+        candidates = []
+        for r in range(len(rows)):
+            if merge_pattern[r] != ".":
+                continue
+            # Must have text in col 0
+            first_cell = rows[r][0] if rows[r] else None
+            text = ""
+            if isinstance(first_cell, dict):
+                text = (first_cell.get("text") or "").strip()
+            if not text or len(text) < 20:
+                # Skip generic table header rows like "Key risks"
+                continue
+            # Must be followed by a merged row (bullet row)
+            if r + 1 < len(rows) and merge_pattern[r + 1] == "M":
+                candidates.append(r)
+
+        if len(candidates) >= 2:
+            header_indices = candidates
 
     if len(header_indices) < 2:
         return []

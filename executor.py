@@ -163,8 +163,43 @@ def execute_plan(plan: dict, prs, label_list: list) -> dict:
             return {"status": "structural_failure", "log": log,
                     "failed_at": action}
 
-    # Phase 2: Content updates (order doesn't matter, all independent)
-    for step in plan.get("content_updates", []):
+    # Phase 2: Content updates.
+    #
+    # Sort so surgical content edits run BEFORE structural swaps. Reason:
+    # the LLM's row_idx / col_idx references in edit_table_cell etc. are
+    # based on the PRE-swap state it sees in the compact deck state. If
+    # swaps ran first, edits would land on the wrong rows. Running edits
+    # first means they land on intended content, and the subsequent swap
+    # relocates that edited content to the new section position.
+    #
+    # Section detection uses merge-pattern fallback which is invariant
+    # under edit_table_cell (merged status doesn't change), so running
+    # edits first is safe for swap_table_sections detection.
+    _ACTION_PRIORITY = {
+        # Surgical edits (run first)
+        "edit_run": 0,
+        "edit_paragraph": 0,
+        "edit_table_cell": 0,
+        "edit_table_run": 0,
+        "update_chart": 0,
+        "fill_placeholder": 0,
+        "fill_table": 0,
+        "set_shape_fill": 0,
+        # Creation (middle)
+        "create_chart": 1,
+        "create_table": 1,
+        # Structural swaps / geometry (run last)
+        "swap_table_sections": 2,
+        "swap_table_rows": 2,
+        "swap_shape_positions": 2,
+        "move_shape": 2,
+    }
+    sorted_content = sorted(
+        plan.get("content_updates", []),
+        key=lambda s: _ACTION_PRIORITY.get(s.get("action", ""), 1)
+    )
+
+    for step in sorted_content:
         action = step["action"]
         fn = CONTENT_DISPATCH.get(action)
         if not fn:
