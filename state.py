@@ -295,8 +295,8 @@ def extract_shape(shape) -> dict | None:
             #       headroom (so small edits can still add a few words)
             # Whichever is smaller wins. This guarantees rows don't
             # auto-grow past where the designer intended.
-            TABLE_SAFETY_MARGIN = 0.50
-            CONTENT_GROWTH_HEADROOM = 1.15
+            TABLE_SAFETY_MARGIN = 0.42
+            CONTENT_GROWTH_HEADROOM = 1.10
             row_char_limits = []
             try:
                 table_w = shape.width

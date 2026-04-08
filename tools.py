@@ -1608,8 +1608,8 @@ def swap_table_sections(
 
 
 def fit_tables_to_slide(prs, slide_idx: int,
-                        bottom_margin: float = 5.0,
-                        rounding_tolerance: float = 5.0) -> dict:
+                        bottom_margin: float = 0.0,
+                        rounding_tolerance: float = 15.0) -> dict:
     """
     Conservative post-write safety net for table overflow.
 
