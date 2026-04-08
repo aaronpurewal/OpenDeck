@@ -1,4 +1,4 @@
-# OpenDeck
+# OpenDeck (Pls fix, thanks)
 
 LLM-powered PowerPoint editing that **perfectly matches your slide master**. Give it a natural language instruction, and it surgically modifies exactly what you ask. Every font, color, margin, and bullet style stays pixel-perfect.
 
