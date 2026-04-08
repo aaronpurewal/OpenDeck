@@ -300,8 +300,7 @@ def step3_execute(plan: dict, deck_state: dict, prs,
         fit_result = fit_tables_to_slide(
             prs, s_idx,
             bottom_margin=5.0,
-            max_iterations=50,
-            min_font_height=7.0
+            min_row_height=24.0
         )
         if fit_result.get("shrunk"):
             for entry in fit_result["shrunk"]:
