@@ -1608,23 +1608,27 @@ def swap_table_sections(
 
 
 def fit_tables_to_slide(prs, slide_idx: int,
-                        bottom_margin: float = 20.0,
-                        min_font_height: float = 8.0,
-                        max_iterations: int = 25) -> dict:
+                        bottom_margin: float = 5.0,
+                        min_row_height: float = 24.0) -> dict:
     """
     Post-write safety net: ensure no table on the given slide overflows
-    the slide bottom by iteratively shrinking fonts in the tallest rows.
+    the slide bottom by reducing row heights on bullet rows.
 
-    Strategy:
+    Strategy (the correct Aspose approach):
       1. For each table, compute table.y + sum(row_heights)
-      2. If it exceeds (slide_height - bottom_margin), enter a shrink loop
-      3. Each iteration: find the tallest row, reduce all portion font
-         heights in that row by 7% (x0.93)
-      4. Stop when fits or fonts hit min_font_height floor
-      5. Returns a report of what was shrunk
+      2. If overflow, identify bullet rows (merged rows or rows > 40pt
+         excluding the header row)
+      3. Enable text_frame autofit_type=NORMAL on all cells in bullet
+         rows so Aspose auto-shrinks text to fit smaller row heights
+      4. Set `minimal_height` on each bullet row to a reduced target
+         height. Aspose honors this when content can fit; otherwise
+         clamps to the minimum height the content needs at the auto-fit
+         font size
+      5. Row heights update immediately — no save/reload needed
 
-    This is a defensive measure — primary enforcement should be pre-write
-    truncation via char_limit. This catches cases the LLM missed.
+    This replaces the older font-iteration approach which didn't work
+    because changing portion.font_height does not trigger row.height
+    recomputation in Aspose.
     """
     if slide_idx < 0 or slide_idx >= len(prs.slides):
         return {"status": "error",
@@ -1638,7 +1642,7 @@ def fit_tables_to_slide(prs, slide_idx: int,
     slide = prs.slides[slide_idx]
     usable_h = slide_h - bottom_margin
 
-    shrunk_tables = []
+    resized_tables = []
     overflow_remaining = []
 
     for shape in slide.shapes:
@@ -1648,9 +1652,10 @@ def fit_tables_to_slide(prs, slide_idx: int,
         try:
             table_y = table.y
             n_rows = len(table.rows)
+            n_cols = len(table.columns)
         except Exception:
             continue
-        if n_rows == 0:
+        if n_rows == 0 or n_cols == 0:
             continue
 
         def total_height():
@@ -1664,114 +1669,113 @@ def fit_tables_to_slide(prs, slide_idx: int,
         if initial_bottom <= usable_h:
             continue  # Already fits
 
-        shrink_log = []
-        iteration = 0
-        hit_floor = False
-        while iteration < max_iterations:
-            current_total = total_height()
-            current_bottom = table_y + current_total
-            if current_bottom <= usable_h:
-                break
-
-            # Find the tallest row index
-            try:
-                heights = [table.rows[r].height for r in range(n_rows)]
-            except Exception:
-                break
-            tallest_r = heights.index(max(heights))
-
-            # Shrink all portion font heights in the tallest row by 7%
-            row_shrunk_any = False
-            all_below_floor = True
-            try:
-                row = table.rows[tallest_r]
-            except Exception:
-                break
-            try:
-                n_cols = len(table.columns)
-            except Exception:
-                break
-            for col_idx in range(n_cols):
+        # Identify bullet rows — rows where ALL cells are merged. These
+        # are the classic "bullet content spans all columns" rows in
+        # consulting tables. Header rows have unmerged cells per column
+        # so they are excluded.
+        bullet_rows = []
+        try:
+            for r in range(n_rows):
+                if r == 0:
+                    continue
+                row = table.rows[r]
+                all_merged = True
                 try:
-                    cell = row[col_idx]
+                    for c in range(n_cols):
+                        cell = row[c]
+                        if not cell.is_merged_cell:
+                            all_merged = False
+                            break
                 except Exception:
-                    continue
-                tf = _safe_text_frame(cell)
-                if tf is None:
-                    continue
-                try:
-                    paragraphs = tf.paragraphs
-                except Exception:
-                    continue
-                for para in paragraphs:
-                    try:
-                        portions = para.portions
-                    except Exception:
-                        continue
-                    for portion in portions:
-                        try:
-                            pf = portion.portion_format
-                        except Exception:
-                            continue
-                        cur_fh = _safe_font_height(pf)
-                        if cur_fh <= 0:
-                            cur_fh = 10.0  # default assumption
-                        new_fh = cur_fh * 0.93
-                        if new_fh < min_font_height:
-                            # Floor hit for this portion, set to min and
-                            # keep checking other portions
-                            new_fh = min_font_height
-                            if cur_fh > min_font_height:
-                                try:
-                                    pf.font_height = new_fh
-                                    row_shrunk_any = True
-                                except Exception:
-                                    pass
-                        else:
-                            try:
-                                pf.font_height = new_fh
-                                row_shrunk_any = True
-                                all_below_floor = False
-                            except Exception:
-                                pass
+                    all_merged = False
+                if all_merged:
+                    bullet_rows.append(r)
+        except Exception:
+            pass
 
-            if not row_shrunk_any:
-                hit_floor = True
-                break
-
-            shrink_log.append({"row": tallest_r, "iteration": iteration})
-            iteration += 1
-
-            if all_below_floor:
-                hit_floor = True
-                break
-
-        final_total = total_height()
-        final_bottom = table_y + final_total
         try:
             table_name = table.name
         except Exception:
             table_name = "unknown"
 
-        if shrink_log:
-            shrunk_tables.append({
+        if not bullet_rows:
+            overflow_remaining.append({
                 "name": table_name,
-                "iterations": len(shrink_log),
-                "initial_bottom": initial_bottom,
-                "final_bottom": final_bottom,
-                "slide_limit": usable_h,
+                "overflow_pt": initial_bottom - usable_h,
+                "reason": "no eligible bullet rows",
             })
+            continue
+
+        # Enable autofit on all bullet row cells so Aspose shrinks text
+        # to fit the cell when minimal_height is reduced.
+        for r in bullet_rows:
+            try:
+                row = table.rows[r]
+            except Exception:
+                continue
+            for col_idx in range(n_cols):
+                try:
+                    cell = row[col_idx]
+                except Exception:
+                    continue
+                try:
+                    tff = cell.text_frame.text_frame_format
+                    tff.autofit_type = slides.TextAutofitType.NORMAL
+                except Exception:
+                    pass
+
+        # Compute how much we need to shave off total table height
+        overflow = initial_bottom - usable_h
+        # Sum current bullet row heights (our shrinkable budget)
+        try:
+            bullet_total = sum(table.rows[r].height for r in bullet_rows)
+        except Exception:
+            continue
+
+        if bullet_total <= 0:
+            overflow_remaining.append({
+                "name": table_name,
+                "overflow_pt": overflow,
+                "reason": "bullet rows have no height",
+            })
+            continue
+
+        # Shrink each bullet row proportionally to its share of bullet_total
+        # Leave a 5pt safety buffer below usable_h
+        target_bullet_total = max(bullet_total - overflow - 5.0, n_rows * min_row_height)
+        shrink_ratio = target_bullet_total / bullet_total
+
+        for r in bullet_rows:
+            try:
+                current_h = table.rows[r].height
+                target_h = max(current_h * shrink_ratio, min_row_height)
+                table.rows[r].minimal_height = target_h
+            except Exception:
+                pass
+
+        # Read back what Aspose actually gave us
+        final_total = total_height()
+        final_bottom = table_y + final_total
+
+        resized_tables.append({
+            "name": table_name,
+            "initial_bottom": initial_bottom,
+            "final_bottom": final_bottom,
+            "slide_limit": usable_h,
+            "rows_resized": len(bullet_rows),
+        })
+
         if final_bottom > usable_h:
             overflow_remaining.append({
                 "name": table_name,
                 "overflow_pt": final_bottom - usable_h,
-                "hit_floor": hit_floor,
+                "reason": "content too long to fit in reduced rows",
             })
 
     return {
         "status": "ok",
         "slide_idx": slide_idx,
-        "shrunk": shrunk_tables,
+        "shrunk": resized_tables,  # keep same key for backward compat with pipeline
         "overflow_remaining": overflow_remaining,
     }
 
