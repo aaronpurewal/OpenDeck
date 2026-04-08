@@ -4,6 +4,36 @@ LLM-powered PowerPoint editing that **perfectly matches your slide master**. Giv
 
 <img width="1509" height="884" alt="Screenshot 2026-04-08 at 12 47 23 PM" src="https://github.com/user-attachments/assets/0e22c973-a5e6-48bd-8c8e-62dbca3c595c" />
 
+## DEMO
+
+Input:
+<img width="868" height="664" alt="Screenshot 2026-04-08 at 6 43 28 PM" src="https://github.com/user-attachments/assets/00d495b9-3897-4307-8c79-e02169de46c0" />
+
+PROMPT:
+"
+Few edits on the risk slide:
+
+1) Channel checks (Karen/Derek) are scattered across risks 3 and 4. Consolidate all detail into the SPC experience mitigant where it belongs -- keep her original title verbatim (COO, APG CAS / formerly head of FM at JLL). In risk 3 mitigant, delete the Karen/Derek paragraph and replace with: "Per channel checks (see SPC experience mitigant), customers validated CleanStream's value proposition and entrenched positioning."
+
+2) Risk 5 bullet 2: flip to vendor cap first, customer cap second to match the risk header. Use: "Vendors have a 4% annual cap on price increases; customers have a 5% annual cap, enabling pass-through of vendor costs." Delete the old sentence, don't leave both.
+
+3) "removing some lower-margin construction client" -- change to "a single lower-margin construction client" and lead with the margin improvement: "After removing a single lower-margin construction client in 2022, the Company meaningfully increased gross margins."
+
+4) Swap risk 4 (SPC experience) and risk 5 (vendor) in order. Each keeps its own mitigants.
+
+Pls fix thx
+
+"
+
+
+OUTPUT:
+
+<img width="826" height="633" alt="Screenshot 2026-04-08 at 6 43 07 PM" src="https://github.com/user-attachments/assets/517a028b-d87e-4e28-9757-65d8beb0a3b8" />
+
+<img width="1512" height="910" alt="Screenshot 2026-04-08 at 6 43 48 PM" src="https://github.com/user-attachments/assets/4a6a1d2a-7b5e-4614-b584-f2d2d54c10a8" />
+
+
+
 
 ## The Problem
 
