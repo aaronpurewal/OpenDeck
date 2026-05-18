@@ -438,6 +438,46 @@ def step3_execute(plan: dict, deck_state: dict, prs,
     }
 
 
+def build_change_summary(plan: dict, result: dict) -> str:
+    """Produce a human-readable summary from the plan and execution result."""
+    lines = []
+    ok = err = 0
+    for entry in result.get("log", []):
+        if entry.get("status") == "ok":
+            ok += 1
+        elif entry.get("status") == "error":
+            err += 1
+
+    for step in plan.get("structural_changes", []):
+        action = step.get("action", "")
+        if action == "clone_slide":
+            label = step.get("label", "new slide")
+            layout = step.get("layout_name", "")
+            lines.append(f"Added {label} (layout: {layout})")
+        elif action == "delete_slides":
+            labels = step.get("slide_labels", [])
+            lines.append(f"Deleted {', '.join(labels)}")
+        elif action == "reorder_slides":
+            lines.append("Reordered slides")
+        elif action == "duplicate_slide":
+            lines.append(f"Duplicated {step.get('source_label', 'slide')}")
+
+    edit_counts: dict[str, int] = {}
+    for item in plan.get("content_manifest", []):
+        action = item.get("action", "unknown")
+        edit_counts[action] = edit_counts.get(action, 0) + 1
+    for action, count in edit_counts.items():
+        label = action.replace("_", " ")
+        lines.append(f"{count}x {label}")
+
+    summary = "; ".join(lines) if lines else "No changes"
+    summary += f" ({ok} succeeded, {err} failed)"
+
+    for w in result.get("data_warnings", []):
+        summary += f"\n⚠ {w}"
+    return summary
+
+
 def _call_with_retry(fn, *args, max_retries: int = None):
     """
     Call an LLM function and retry on JSON parse failure.

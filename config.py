@@ -55,6 +55,12 @@ DEFAULT_LINE_SPACING = 1.2
 DEFAULT_OUTPUT_DIR = os.getenv("SSE_OUTPUT_DIR", "output")
 TEMP_DIR = os.getenv("SSE_TEMP_DIR", "temp")
 
+# --- Server ---
+SERVER_HOST = os.getenv("SSE_SERVER_HOST", "0.0.0.0")
+SERVER_PORT = int(os.getenv("SSE_SERVER_PORT", "8000"))
+MAX_UPLOAD_MB = int(os.getenv("SSE_MAX_UPLOAD_MB", "50"))
+API_KEY = os.getenv("SSE_API_KEY", "")
+
 # --- Placeholder Detection ---
 PLACEHOLDER_PATTERNS = [
     "xxxx", "XXXX", "lorem", "ipsum", "placeholder", "[placeholder]",
